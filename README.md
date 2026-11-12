@@ -1,57 +1,85 @@
-# Board Studio for IngeTrazo
+# Board Studio
 
-Порт SketchUp-розширення [Board Studio](reference/board-studio-main) для IngeTrazo:
-параметричні панелі для меблів і корпусів за трьома точками.
+An IngeTrazo extension for creating parametric furniture and cabinetry panels by defining 3 points in 3D space. A Python port of the Board Studio extension for SketchUp.
 
-## Можливості
+## Features
 
-- **3 точки**: кут → довжина/напрямок → висота (перпендикулярно до базової лінії).
-  Довжину й висоту можна набрати з клавіатури й натиснути Enter (VCB).
-- **Параметри**: плита (ДСП 10…38, МДФ 6…22, ДВП 3/4), товщина (мм — плита підставляє
-  номінальну, її можна виправити), відступ уздовж довжини (мм), відступ уздовж ширини/висоти (мм).
-- **Текстури автоматично**: пласті — імітація дуба з волокнами вздовж довжини панелі
-  (від 1-ї до 2-ї точки), торці — структура ДСП або МДФ/ДВП залежно від плити.
-  Матеріали з'являються в панелі матеріалів документа, текстури вбудовуються в `.igz`.
-  Відступ зменшує панель з обох боків (якщо розмір більший за подвоєний відступ).
-- **New 3-Point Panel** — діалог параметрів, потім малювання.
-- **Next 3-Point Panel** — одразу малювання з попередніми параметрами
-  (вони зберігаються і між сесіями).
-- **Живе 3D-прев'ю**: брусок, контур і пунктирний вихідний габарит при відступах.
-- **Ctrl** — перевернути бік видавлювання.
-- Результат — окрема група «Panel N» із замкненим тілом; одна дія undo.
-  Якщо відкрита група на редагування — панель створюється всередині неї.
-  У Browser панелі мають тип «Panel» з розмірами.
+- **3-Point Creation**: Define panel origin, length/width direction, and height with 3 clicks or by typing values (Measurements box + Enter).
+- **Board Materials**: Choose the board type from a list (Chipboard / ДСП 10–38 mm, MDF / МДФ 6–22 mm, Hardboard / ДВП 3–4 mm). The board sets its nominal thickness, which you can still adjust in mm.
+- **Parametric Settings**: Set panel thickness (mm), offset along length (mm), and offset along width/height (mm).
+- **Automatic Textures**:
+  - Faces get an oak laminate texture with the grain running along the panel length (from the 1st to the 2nd point).
+  - Edges get a chipboard texture (ДСП) or a fibreboard texture (МДФ / ДВП), depending on the board.
+  - The materials appear in the document's materials panel. Textures are embedded in the `.igz` file and follow the panel when you move, rotate or scale it.
+- **Two Workflow Commands**:
+  - **New 3-Point Panel**: Opens the parameters dialog to choose the board and dimensions before drawing.
+  - **Next 3-Point Panel**: Skips the dialog and instantly draws using the previous settings (remembered between sessions).
+- **Live 3D Preview**: Real-time textured preview of the panel volume. When offsets are set, the original boundary is shown dashed.
+- **Flip Extrusion**: Toggle extrusion direction dynamically using `Ctrl`.
+- **Clean Geometry**: Automatically generates an isolated group ("Panel N") with a closed solid and correct face normals. Undo removes it in one step. If a group is open for editing, the panel is created inside it.
+- **Browser Integration**: Panels are listed with type "Panel", their material and their dimensions.
 
-Висоту зручно ставити: напрямок «прилипає» до осей X/Y/Z (±3°),
-стрілки блокують вісь, прив'язки до точок моделі (кінці, середини, ребра) працюють.
+## Installation
 
-## Встановлення
+### Method 1: Install Script (Linux)
 
 ```bash
-./scripts/install.sh          # симлінк у теку розширень (для розробки)
-./scripts/install.sh --copy   # або копія
+./scripts/install.sh          # symlink (development: changes apply after restarting IngeTrazo)
+./scripts/install.sh --copy   # copy
 ```
 
-Або вручну: скопіювати теку `board_studio/` у
-**Extensions ▸ Open extensions folder** (flatpak:
-`~/.var/app/com.ingetrazo.IngeTrazo/data/ingetrazo/plugins/`). Перезапустити IngeTrazo.
+### Method 2: Manual Installation
 
-## Використання
+Copy the `board_studio/` directory into your IngeTrazo extensions folder (**Extensions** > **Open extensions folder**):
 
-- **Extensions ▸ Board Studio ▸ New / Next 3-Point Panel**
-- тулбар **Panel Creator**
+- **Linux (Flatpak)**:
+  ```text
+  ~/.var/app/com.ingetrazo.IngeTrazo/data/ingetrazo/plugins/
+  ```
+- **Linux**:
+  ```text
+  ~/.local/share/ingetrazo/plugins/
+  ```
+- **Windows**:
+  ```text
+  %APPDATA%\ingetrazo\plugins\
+  ```
 
-## Структура
+Restart IngeTrazo after copying.
 
-| Файл | Що робить | Аналог у Ruby |
-|---|---|---|
-| `board_studio/__init__.py` | `setup(app)`: меню, тулбар, діалог параметрів, збереження параметрів | `board_studio.rb`, `main.rb`, `UI.inputbox`, `@@last_*` |
-| `board_studio/materials.py` | список плит, текстури пластей і торців | — |
-| `board_studio/textures/` | безшовні текстури (генерує `scripts/make_textures.py`) | — |
-| `board_studio/tool.py` | геометрія, інструмент, прев'ю, створення групи | `geometry_helper.rb`, `three_point_panel_tool.rb`, `preview_drawer.rb` |
+## Usage
 
-## Тести
+Access the tools via:
+- **Extensions Menu**: `Extensions` > `Board Studio` > `New 3-Point Panel` / `Next 3-Point Panel`
+- **Toolbar**: `Panel Creator` toolbar icons
+
+Drawing a panel:
+1. Click the first corner.
+2. Click the second point (length), or type the length and press Enter.
+3. Click the third point (height), or type the height and press Enter.
+
+While setting the height:
+- The direction snaps to the X/Y/Z axes within 3°.
+- Arrow keys lock an axis.
+- Snaps to points of the model (endpoints, midpoints, edges) work as usual.
+- `Esc` cancels.
+
+## Customization
+
+- **Boards**: add a line to `PRESETS` in `board_studio/materials.py` (name, thickness in mm, edge texture).
+- **Textures**: `board_studio/textures/` holds `oak.png`, `chipboard.png` and `fibreboard.png`. They are seamless textures generated by `scripts/make_textures.py`. Replace them with photos of real samples if you like, keeping the file names. Tile sizes are set in `SURFACES` in `board_studio/materials.py`.
+
+## Development
+
+| File | Purpose |
+|---|---|
+| `board_studio/__init__.py` | `setup(app)`: menu, toolbar, parameters dialog, saved settings |
+| `board_studio/tool.py` | geometry, the 3-point tool, preview, panel creation |
+| `board_studio/materials.py` | board presets, face and edge textures |
+| `board_studio/textures/` | texture images |
+
+Run the tests with IngeTrazo's own Python (Flatpak, no window):
 
 ```bash
-./scripts/test.sh   # Python IngeTrazo з flatpak, без вікна
+./scripts/test.sh
 ```
