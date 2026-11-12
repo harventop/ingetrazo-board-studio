@@ -11,11 +11,13 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction, QIcon
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QToolBar
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+                               QFormLayout, QToolBar)
 
 from core.units import fmt_len_fine
 from views.status_hints import HINTS
 
+from .materials import DEFAULT, PRESETS, preset_thickness
 from .tool import EXT_KEY, ThreePointPanelTool
 
 ICONS = Path(__file__).parent / "icons"
@@ -71,6 +73,8 @@ def setup(app):
 def _load(tool):
     """Останні параметри (між сесіями — у QSettings, у мм)."""
     qs = QSettings()
+    material = str(qs.value("board_studio/material", DEFAULT))
+    tool.material = material if any(material == p[0] for p in PRESETS) else DEFAULT
     for name, _label, default, _min in FIELDS:
         try:
             mm = float(qs.value(f"board_studio/{name}_mm", default))
@@ -84,6 +88,10 @@ def _ask(parent, tool):
     dlg = QDialog(parent)
     dlg.setWindowTitle("Create Panel Parameters")
     form = QFormLayout(dlg)
+    combo = QComboBox(dlg)
+    combo.addItems([name for name, *_ in PRESETS])
+    combo.setCurrentText(tool.material)
+    form.addRow("Material", combo)
     spins = {}
     for name, label, _default, minimum in FIELDS:
         box = spins[name] = QDoubleSpinBox(dlg)
@@ -91,6 +99,8 @@ def _ask(parent, tool):
         box.setSuffix(" mm")
         box.setValue(getattr(tool, name) * 1000)
         form.addRow(label, box)
+    # Плита підставляє свою товщину; її можна виправити вручну.
+    combo.currentTextChanged.connect(lambda name: spins["thickness"].setValue(preset_thickness(name)))
     buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
     buttons.accepted.connect(dlg.accept)
     buttons.rejected.connect(dlg.reject)
@@ -99,6 +109,8 @@ def _ask(parent, tool):
     if dlg.exec() != QDialog.Accepted:
         return False
     qs = QSettings()
+    tool.material = combo.currentText()
+    qs.setValue("board_studio/material", tool.material)
     for name, box in spins.items():
         setattr(tool, name, box.value() / 1000)
         qs.setValue(f"board_studio/{name}_mm", box.value())
@@ -111,5 +123,5 @@ def _outliner_kind(group):
     if not data:
         return None
     return {"type": "Panel",
-            "props": [(k.capitalize(), fmt_len_fine(data[k]))
-                      for k in ("length", "width", "thickness")]}
+            "props": [("Material", data.get("material", "—"))]
+                     + [(k.capitalize(), fmt_len_fine(data[k])) for k in ("length", "width", "thickness")]}

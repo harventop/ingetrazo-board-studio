@@ -25,6 +25,8 @@ from core.snap import POINT_SNAP_KINDS
 from core.units import fmt_len
 from tools.base import AxisMagnet, Tool, loop_normal
 
+from .materials import DEFAULT, board_paints, ensure_materials
+
 EXT_KEY = "board_studio"
 EPS = 1e-5
 SNAP_COS = math.cos(math.radians(3.0))      # висота «прилипає» до осей у межах 3°
@@ -93,7 +95,9 @@ class ThreePointPanelTool(AxisMagnet, Tool):
              "Click second point (length), or type the length",
              "Click third point (height), or type the height")
 
-    def __init__(self, thickness=0.016, offset_length=0.0, offset_width=0.0):
+    def __init__(self, thickness=0.016, offset_length=0.0, offset_width=0.0,
+                 material=DEFAULT):
+        self.material = material        # назва плити з materials.PRESETS
         self.thickness = thickness
         self.offset_length = offset_length
         self.offset_width = offset_width
@@ -202,7 +206,11 @@ class ThreePointPanelTool(AxisMagnet, Tool):
 
     def preview_faces(self):
         panel = self._panel()
-        return [Face(vertices=lp) for lp in box_loops(panel[0], panel[2])] if panel else []
+        if not panel:
+            return []
+        corners, _raw, push = panel
+        return [Face(vertices=lp, attrs=attrs) for lp, attrs in
+                zip(box_loops(corners, push), board_paints(corners, push, self.material))]
 
     def value_label(self):
         if not self.points or self.hover is None:
@@ -293,16 +301,18 @@ class ThreePointPanelTool(AxisMagnet, Tool):
     def _create(self, viewport, corners, push):
         """Окрема група з бруском, один крок undo. ``InsertGroupCommand`` кладе
         її у відкриту на редагування групу, якщо є (як ``active_entities``)."""
+        ensure_materials(viewport.scene, self.material)
         mesh = Mesh()
-        for lp in box_loops(corners, push):
-            mesh.add_face(lp)
+        for lp, attrs in zip(box_loops(corners, push), board_paints(corners, push, self.material)):
+            mesh.add_face(lp).attrs = attrs
         group = Group(mesh, name=_next_name(viewport.scene))
         sizes = {"length": (corners[1] - corners[0]).length(),
                  "width": (corners[3] - corners[0]).length(),
                  "thickness": push.length(),
                  "offset_length": self.offset_length,
                  "offset_width": self.offset_width}
-        group.ext = {EXT_KEY: {k: round(v, 6) for k, v in sizes.items()}}
+        group.ext = {EXT_KEY: {"material": self.material,
+                               **{k: round(v, 6) for k, v in sizes.items()}}}
         history = viewport.history
         history.execute(InsertGroupCommand(group))
         if history.last_error:

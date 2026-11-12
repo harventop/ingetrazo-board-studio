@@ -102,6 +102,7 @@ def test_tool(t):
     check(tool.vcb_label == "Height", "VCB label")
     tool.on_hover(ctx(vp, V(0.2, 0, 0.72)))
     check(len(tool.preview_faces()) == 6, "box preview faces")
+    check(all(f.attrs and f.attrs.get("texture") for f in tool.preview_faces()), "textured preview")
     check(len(tool.rubber_band_lines()) == 1 + 12, "preview lines")
     check(tool.guide_preview_lines() == [], "no raw outline without offsets")
     tool.on_click(ctx(vp, V(0.2, 0, 0.72)))
@@ -110,7 +111,8 @@ def test_tool(t):
     check(len(g.mesh.faces) == 6 and len(g.mesh.edges) == 12, "6 faces, 12 edges")
     from core.solids import is_solid
     check(is_solid(g), "closed solid")
-    check(g.ext["board_studio"] == {"length": 0.6, "width": 0.72, "thickness": 0.018,
+    check_paint(scene, g, along_length=V(1, 0, 0), edge="chipboard")
+    check(g.ext["board_studio"] == {"material": "ДСП 16", "length": 0.6, "width": 0.72, "thickness": 0.018,
                                    "offset_length": 0.0, "offset_width": 0.0}, f"ext {g.ext}")
     check(g.name == "Panel 1", g.name)
     check(tool.start_point is None, "reset after creation")
@@ -119,12 +121,14 @@ def test_tool(t):
     # Ctrl + введення з клавіатури
     tool.on_key(vp, Qt.Key_Control, Qt.ControlModifier)
     check(tool.flip, "Ctrl flips")
+    tool.material = "МДФ 18"
     tool.on_click(ctx(vp, V(0, 1, 0)))
     tool.on_hover(ctx(vp, V(1, 1, 0)))
     check(tool.on_value(vp, 0.5) and close(tool.points[1], V(0.5, 1, 0)), "typed length")
     tool.on_hover(ctx(vp, V(0.5, 1, 0.3)))
     check(tool.on_value(vp, 0.4), "typed height")
     g2 = scene.groups[-1]
+    check_paint(scene, g2, along_length=V(1, 0, 0), edge="fibreboard")
     check(coords(g2, "y") == {1.0, 1.018}, f"flipped push toward +Y: {coords(g2, 'y')}")
     check(coords(g2, "z") == {0.0, 0.4}, "typed height")
     check(g2.name == "Panel 2", g2.name)
@@ -159,6 +163,45 @@ def test_tool(t):
           coords(scene.groups[-1], "z") == {0.0, 0.016}, "axis lock keeps it flat")
 
 
+def check_paint(scene, g, along_length, edge):
+    """Пласті — дуб з волокнами вздовж довжини, торці — текстура серцевини."""
+    m = importlib.import_module("ingetrazo_plugin_board_studio.materials")
+    oak, edge_name = m.SURFACES["oak"][0], m.SURFACES[edge][0]
+    check(oak in scene.materials and edge_name in scene.materials, "materials registered")
+    check(all(Path(mat.texture["path"]).is_file() for mat in scene.materials.values()),
+          "texture files exist")
+    big = [f for f in g.mesh.faces if f.attrs.get("mat") == oak]
+    sides = [f for f in g.mesh.faces if f.attrs.get("mat") == edge_name]
+    check(len(big) == 2 and len(sides) == 4, f"2 oak + 4 {edge} faces")
+    for f in big:
+        u = V(*f.attrs["texture"]["uvw"][:3])
+        check(close(u.normalized(), along_length, 1e-5), f"grain along length: {u}")
+
+
+def test_dialog(t):
+    """Діалог: плита підставляє товщину, товщину можна виправити вручну."""
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QComboBox, QDialogButtonBox
+    init = sys.modules["ingetrazo_plugin_board_studio"]
+    tool = t.ThreePointPanelTool()
+
+    def fill():
+        dlg = QApplication.activeModalWidget()
+        dlg.findChild(QComboBox).setCurrentText("ДСП 22")
+        spins = dlg.findChildren(init.QDoubleSpinBox)
+        check(math.isclose(spins[0].value(), 22.0), "preset sets thickness")
+        spins[0].setValue(21.5)
+        dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+
+    QTimer.singleShot(0, fill)
+    check(init._ask(None, tool), "dialog accepted")
+    check(tool.material == "ДСП 22" and math.isclose(tool.thickness, 0.0215),
+          f"dialog result {tool.material} {tool.thickness}")
+    fresh = t.ThreePointPanelTool()
+    init._load(fresh)
+    check(fresh.material == "ДСП 22" and math.isclose(fresh.thickness, 0.0215), "settings persisted")
+
+
 def test_setup(plug, t):
     QCoreApplication.setOrganizationName("board-studio-tests")
     QCoreApplication.setApplicationName("board-studio-tests")
@@ -184,6 +227,7 @@ def main():
     test_geometry(t)
     test_tool(t)
     test_setup(plug, t)
+    test_dialog(t)
     if FAILS:
         sys.exit(f"\n{len(FAILS)} failure(s)")
     print("OK")
