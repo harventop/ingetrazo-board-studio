@@ -1,0 +1,38 @@
+{
+    "ENGLISH": {
+        "Export DXF for ViyarPro": "Export DXF for ViyarPro",
+        "Delete everything except flatten": "Delete everything except flatten",
+        "Delete flatten": "Delete flatten",
+        "Export flatten to DXF": "Export flatten to DXF",
+        " flatten.dxf": " flatten.dxf",
+        "DXF flatten has been exported succesfull!": "DXF flatten has been exported succesfull!",
+        "Export error!": "Export error!",
+        "Unexpected export error!": "Unexpected export error!",
+        "There is no flatten. In the ABF extension, click the Flatten button on the toolbar": "There is no flatten. In the ABF extension, click the Flatten button on the toolbar",
+        "Flatten exporting": "Flatten exporting"
+    },
+	"RUSSIAN": {
+		"Export DXF for ViyarPro": "Экспорт DXF для ViyarPro",
+		"Delete everything except flatten": "Удалить всё, кроме плоской проекции",
+		"Delete flatten": "Удалить плоскую проекцию",
+		"Export flatten to DXF": "Экспорт плоской проекции в DXF",
+		" flatten.dxf": " flatten.dxf",
+		"DXF flatten has been exported succesfull!": "Плоская проекция успешно экспортирована в DXF!",
+		"Export error!": "Ошибка экспорта!",
+		"Unexpected export error!": "Неожиданная ошибка экспорта!",
+		"There is no flatten. In the ABF extension, click the Flatten button on the toolbar": "Плоская проекция отсутствует. В расширении ABF нажмите кнопку «Плоская проекция» на панели инструментов",
+		"Flatten exporting": "Экспорт плоской проекции"
+	},
+    "UKRAINIAN": {
+        "Export DXF for ViyarPro": "Експортувати DXF для ViyarPro",
+        "Delete everything except flatten": "Видалити все окрім розкладення",
+        "Delete flatten": "Видалити розкладення",
+        "Export flatten to DXF": "Експорт розкладення в DXF",
+        " flatten.dxf": " розкладання.dxf",
+        "DXF flatten has been exported succesfull!": "DXF розкладення успішно експортовано!",
+        "Export error!": "Помилка при експортуванні!",
+        "Unexpected export error!": "Неочікувана помилка при експортуванні!",
+        "There is no flatten. In the ABF extension, click the Flatten button on the toolbar": "Немає розкладання. Натисни в розширенні ABF на його панелі інструментів кнопку Розкласти",
+        "Flatten exporting": "Експорт розкладення"
+    }
+}
