@@ -26,8 +26,8 @@ from core.units import fmt_len
 from tools.base import AxisMagnet, Tool, loop_normal
 
 from .materials import DEFAULT, board_paints, ensure_materials
+from .panels import EXT_KEY, creation_axes
 
-EXT_KEY = "board_studio"
 EPS = 1e-5
 SNAP_COS = math.cos(math.radians(3.0))      # висота «прилипає» до осей у межах 3°
 dot, cross = V.dotProduct, V.crossProduct
@@ -306,13 +306,16 @@ class ThreePointPanelTool(AxisMagnet, Tool):
         for lp, attrs in zip(box_loops(corners, push), board_paints(corners, push, self.material)):
             mesh.add_face(lp).attrs = attrs
         group = Group(mesh, name=_next_name(viewport.scene))
+        group.axes = creation_axes(corners, push)      # X — довжина, Z — товщина
         sizes = {"length": (corners[1] - corners[0]).length(),
                  "width": (corners[3] - corners[0]).length(),
                  "thickness": push.length(),
                  "offset_length": self.offset_length,
                  "offset_width": self.offset_width}
         group.ext = {EXT_KEY: {"material": self.material,
-                               **{k: round(v, 6) for k, v in sizes.items()}}}
+                               **{k: round(v, 6) for k, v in sizes.items()},
+                               "grain": "length", "article": "", "decor": "",
+                               "edges": [0.0] * 4, "holes": []}}
         history = viewport.history
         history.execute(InsertGroupCommand(group))
         if history.last_error:

@@ -40,6 +40,8 @@ PRESETS = (
     ("ДВП 4", 4.0, "fibreboard"),
 )
 DEFAULT = "ДСП 16"
+#: Однотонний декор — для панелей без текстури (напрямок «none»).
+PLAIN = ("Board Studio — Однотонний", (0.93, 0.92, 0.89))
 _BY_NAME = {name: (mm, edge) for name, mm, edge in PRESETS}
 
 
@@ -57,12 +59,20 @@ def _texture(surface):
     return {"path": str(TEXTURES / file), "sw": sw, "sh": sh}
 
 
-def ensure_materials(scene, material):
-    """Зареєструвати в документі матеріали плити (видно в панелі матеріалів)."""
-    for surface in ("oak", edge_surface(material)):
-        name = SURFACES[surface][0]
-        if name not in scene.materials:
-            scene.materials[name] = Material(name, texture=_texture(surface))
+def ensure_materials(scene, material, plain=False):
+    """Зареєструвати в документі матеріали плити (видно в панелі матеріалів);
+    ``plain`` — ще й однотонний декор."""
+    if material is not None:
+        for surface in ("oak", edge_surface(material)):
+            name = SURFACES[surface][0]
+            if name not in scene.materials:
+                scene.materials[name] = Material(name, texture=_texture(surface))
+    if plain and PLAIN[0] not in scene.materials:
+        scene.materials[PLAIN[0]] = Material(PLAIN[0], color=PLAIN[1])
+
+
+def paint_plain():
+    return {"mat": PLAIN[0], "color": list(PLAIN[1])}
 
 
 def paint(surface, along, across):
