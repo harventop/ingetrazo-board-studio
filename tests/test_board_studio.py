@@ -555,6 +555,134 @@ def test_edge_band_tool(t):
     check(P.panel_data(g)["edges"][1] == 0.8, "undo brings the band back")
 
 
+def test_hole_marks(t):
+    """Позначки отворів: видно — суцільні, всередині — пунктир, за чужою
+    панеллю — не малюються."""
+    import numpy as np
+    from PySide6.QtGui import QImage, QPainter
+    from core.history import History
+    from core.scene import Scene
+    H = importlib.import_module("ingetrazo_plugin_board_studio.holemarks")
+    L = importlib.import_module("ingetrazo_plugin_board_studio.library")
+    F = importlib.import_module("ingetrazo_plugin_board_studio.fasteners")
+    P = importlib.import_module("ingetrazo_plugin_board_studio.panels")
+    ui = importlib.import_module("ingetrazo_plugin_board_studio.ui")
+    L.save(None)
+    scene = Scene()
+    vp = FakeViewport(scene, History(scene))
+    # Боковина x 0..16, дно від неї праворуч; стик у площині x = 16.
+    side = make_panel(t, vp, V(0, 0, 0), V(0, 0.4, 0), V(0, 0.4, 0.72))
+    bottom = make_panel(t, vp, V(0.016, 0, 0), V(0.6, 0, 0), V(0.6, 0.4, 0))
+    scene.selection.update([side, bottom])
+    app = SimpleNamespace(viewport=vp, window=None)
+    text = ui.place_fastener(app, "minifix_15")
+    check(text.startswith("Додано"), f"float32 thickness is not below 16: {text}")
+
+    def view(eye, **kw):
+        base = dict(eye=np.array(eye, dtype=float), forward=np.array([1.0, 0, 0]), cut=None,
+                    xray=False)
+        return H.View(**{**base, **kw})
+
+    H.set_show_when(H.ALWAYS)
+    ov = H.HoleOverlay(None)
+
+    def states(v):
+        ov._scene.update(scene)
+        ov._collect()
+        mouth, _b, _g, _l = ov.classify(v)
+        cup = ov.r > 0.007
+        return ([set(m) for m in mouth[cup]], [set(m) for m in mouth[~cup]])
+
+    inner_up = bool(next(h for h in P.panel_data(bottom)["holes"] if h["d"] == 15.0)["top"])
+    zb = 1 if inner_up == (P.Panel(bottom).R[2, 2] > 0) else -1
+    above, below = [0.4, 0.2, 2.0 * zb], [0.4, 0.2, -2.0 * zb]
+    cups, rest = states(view(above))
+    check(cups and all(c == {H.VISIBLE} for c in cups), f"cups visible from their side {cups}")
+    check(rest and all(r == {H.INSIDE} for r in rest), f"joint holes are inside {rest}")
+    cups, _ = states(view(below))
+    check(all(c == {H.INSIDE} for c in cups), f"cups dashed from the far side {cups}")
+    cups, rest = states(view([-2.0, 0.2, 0.0]))
+    check(all(r == {H.INSIDE} for r in rest), "joint seen through its own side panel")
+    check(all(c == {H.HIDDEN} for c in cups), f"cups behind the side panel are hidden {cups}")
+    _c, rest = states(view(above)._replace(eye=None))
+    check(all(r == {H.INSIDE} for r in rest), "parallel projection")
+    # Розріз прибрав усе з x < 30 мм: отвори стику зникли, чашки видно збоку.
+    cut = (np.array([-1.0, 0, 0]), -0.030)
+    cups, rest = states(view([-2.0, 0.2, 0.5 * zb], cut=cut))
+    check(all(r == {H.HIDDEN} for r in rest) and all(H.HIDDEN not in c for c in cups),
+          f"section cut {cups} {rest}")
+
+    # Стороння панель над усім ховає; у рентгені — пунктир; прихована — не ховає.
+    lid = make_panel(t, vp, V(-1, -1, 1.0 * zb), V(2, -1, 1.0 * zb), V(2, 2, 1.0 * zb))
+    cups, rest = states(view(above))
+    check(all(s == {H.HIDDEN} for s in cups + rest), "another panel hides holes")
+    cups, rest = states(view(above, xray=True))
+    check(all(s == {H.INSIDE} for s in cups + rest), "x-ray shows them dashed")
+    lid.hidden = True
+    scene.version += 1
+    cups, _ = states(view(above))
+    check(all(c == {H.VISIBLE} for c in cups), "hidden panel does not cover")
+
+    check(H._runs([0, 1, 1, 0], 1, True) == [(1, 2)] and H._runs([1, 0, 0, 1], 1, True) == [(3, 2)]
+          and H._runs([1, 0, 1, 1], 1, False) == [(0, 1), (2, 2)]
+          and H._runs([1, 1], 1, True) == [(0, 2)] and H._runs([0, 0], 1, True) == [],
+          "runs of segments")
+
+    # Малювання цілком: накладка і панель кріплення не падають.
+    vp.camera = SimpleNamespace(perspective=True, eye=lambda: V(*above), forward=lambda: V(0, 0, -zb))
+    vp.world_to_pixels = lambda p: (p[:, 0] * 1000 + 50, p[:, 1] * 1000 + 50,
+                                    np.ones(len(p), dtype=bool))
+    img = QImage(700, 520, QImage.Format_RGB32)
+    img.fill(Qt.white)
+    painter = QPainter(img)
+    ov(vp, painter)
+    scene.selection.clear()
+    scene.selection.update([side, bottom])
+    panel = ui.FastenersPanel(app)
+    panel.show()
+    check(any(c.installed for c in panel.candidates), "installed places are listed")
+    check(not panel._covered(vp).any(), "installed places not covered")
+    panel.draw(vp, painter)
+    painter.end()
+
+    # Перемикач: постійно або лише в режимі кріплення; запам'ятовується.
+    from PySide6.QtCore import QSettings
+    M = importlib.import_module("ingetrazo_plugin_board_studio.fastenmode")
+
+    def painted(fn):
+        blank = QImage(700, 520, QImage.Format_RGB32)
+        blank.fill(Qt.white)
+        empty = blank.copy()
+        p = QPainter(blank)
+        fn(vp, p)
+        p.end()
+        return blank != empty
+
+    check(panel.show_always.isChecked() and painted(ov) and painted(panel.draw),
+          "fasteners are always shown by default")
+    panel.show_in_mode.setChecked(True)
+    check(not painted(ov) and not painted(panel.draw), "hidden outside the fastener mode")
+    vp.active_tool = M.FastenerTool(lambda: panel)
+    check(painted(ov) and painted(panel.draw), "shown in the fastener mode")
+    ov.visible = False
+    check(not painted(ov), "Show Holes switches them off in the mode too")
+    ov.visible = True
+    vp.active_tool = None
+    H._show = None                                  # новий сеанс: із налаштувань
+    check(H.show_when() == H.IN_MODE and ui.FastenersPanel(app).show_in_mode.isChecked(),
+          "switch remembered")
+    panel.show_always.setChecked(True)
+    check(painted(ov) and QSettings().value(H.SETTING) == H.ALWAYS, "always again")
+    c = ov.c[np.argmax(ov.r)]
+    check(img.pixelColor(int(c[0] * 1000 + 50), int(c[1] * 1000 + 50)) != Qt.white, "cup filled")
+    lid.hidden = False
+    scene.version += 1
+    check(panel._covered(vp).all(), "another panel covers the installed places")
+    check(F.check(L.fasteners()[0], SimpleNamespace(name="a", mm=(1, 1, 15.5)),
+                  SimpleNamespace(name="b", mm=(1, 1, 16))) is not None, "15.5 mm still refused")
+    panel.hide()
+
+
 def test_drawing(t):
     """Креслення у налаштуваннях: стежить за полями, клік веде в поле, а
     розміри ті самі, що й у справжній розстановці."""
@@ -711,6 +839,7 @@ def main():
     test_panels(t)
     test_properties_dialog(t)
     test_edge_band_tool(t)
+    test_hole_marks(t)
     test_drawing(t)
     test_library_and_settings(t)
     test_setup(plug, t)

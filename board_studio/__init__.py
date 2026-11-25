@@ -25,6 +25,7 @@ from views.status_hints import HINTS
 from . import ui
 from .edgeband import EdgeBandTool
 from .fastenmode import FastenerTool
+from .holemarks import HoleOverlay
 from .settings import edit_settings
 from .materials import DEFAULT, PRESETS, preset_thickness
 from .panels import panel_data
@@ -110,7 +111,7 @@ def setup(app):
         act.setStatusTip(tip)
         act.triggered.connect(lambda _c=False, f=fn: f(app))
         commands.append(act)
-    overlay = ui.HoleOverlay(app)
+    overlay = HoleOverlay(app)
     show = QAction("Show Holes", app.window, checkable=True, checked=True)
     show.setStatusTip("Show dowel and drilling marks on panels")
     show.toggled.connect(lambda on: (setattr(overlay, "visible", on), app.viewport.update()))

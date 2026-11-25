@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Команди для деталей: властивості (кромка, текстура, декор), шканти,
-експорт DXF для ViyarPro і позначки отворів у видовому вікні."""
+експорт DXF для ViyarPro."""
 from __future__ import annotations
 
 import copy
@@ -13,10 +13,10 @@ from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                                QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget)
+                               QListWidgetItem, QMessageBox, QPushButton, QRadioButton,
+                               QVBoxLayout, QWidget)
 
-from . import fasteners
-from .joints import hole_world
+from . import fasteners, holemarks
 from .dxf import export
 from . import library
 
@@ -277,6 +277,7 @@ class FastenersPanel(_LibraryList):
 
     def __init__(self, app, activate=None):
         self.candidates, self.checked, self.skipped = [], set(), []
+        self._boxes = holemarks.SceneBoxes()
         super().__init__(app)
         form = QFormLayout()
         self.offset = QDoubleSpinBox(self)
@@ -314,6 +315,19 @@ class FastenersPanel(_LibraryList):
             self.mode = QPushButton("Режим кріплення (клік по місцю — відмітити)", self)
             self.mode.clicked.connect(activate)
             self.lay.addWidget(self.mode)
+        show = QGroupBox("Показувати кріплення в моделі", self)
+        row = QHBoxLayout(show)
+        self.show_always = QRadioButton("Постійно", show)
+        self.show_in_mode = QRadioButton("Лише в режимі", show)
+        self.show_in_mode.setToolTip("Отвори й рекомендовані місця видно, лише поки "
+                                     "активний режим «Кріплення»")
+        row.addWidget(self.show_always)
+        row.addWidget(self.show_in_mode)
+        row.addStretch(1)
+        only = holemarks.show_when() == holemarks.IN_MODE
+        (self.show_in_mode if only else self.show_always).setChecked(True)
+        self.show_in_mode.toggled.connect(self._set_show)
+        self.lay.addWidget(show)
         self.result = QLabel(self)
         self.result.setWordWrap(True)
         self.lay.addWidget(self.result)
@@ -337,6 +351,12 @@ class FastenersPanel(_LibraryList):
             box.blockSignals(False)
         self.checked.clear()
         self.recompute()
+
+    def _set_show(self, only_in_mode):
+        holemarks.set_show_when(holemarks.IN_MODE if only_in_mode else holemarks.ALWAYS)
+        vp = getattr(self.app, "viewport", None)
+        if vp is not None:
+            vp.update()
 
     # ---- рекомендації ----
     def _panels(self):
@@ -462,13 +482,22 @@ class FastenersPanel(_LibraryList):
                 best, dist = c.key, d
         return best
 
+    def _covered(self, viewport):
+        """Для кожного місця: чи закриває його стороння панель."""
+        self._boxes.update(viewport.scene)
+        pts = np.array([c.point for c in self.candidates], dtype=np.float64).reshape(-1, 3)
+        boxes = self._boxes.boxes
+        status = boxes.status(holemarks.view_of(viewport), pts[:, None], boxes.touch(pts))
+        return status[:, 0] == holemarks.HIDDEN
+
     def draw(self, viewport, painter):
-        if not self.isVisible() or not self.candidates:
+        if not self.isVisible() or not self.candidates or not holemarks.shown_in(viewport):
             return
         xs, ys, front = self._pixels(viewport)
+        covered = self._covered(viewport)
         painter.setRenderHint(painter.RenderHint.Antialiasing)
         for i, c in enumerate(self.candidates):
-            if not (front[2 * i] and front[2 * i + 1]):
+            if not (front[2 * i] and front[2 * i + 1]) or c.installed and covered[i]:
                 continue
             p, q = QPointF(float(xs[2 * i]), float(ys[2 * i])), \
                 QPointF(float(xs[2 * i + 1]), float(ys[2 * i + 1]))
@@ -580,50 +609,3 @@ def export_dxf(app, path=None):
         return None
     _status(vp, f"{len(panels)} panel(s) exported to {path}", 6000)
     return path
-
-
-# ---- Позначки отворів ----------------------------------------------------------------------
-
-class HoleOverlay:
-    """Малює отвори панелей поверх кадру: у пласті — кільце, у торці —
-    крапка. Список перераховується лише при зміні документа."""
-
-    FACE = QColor(230, 120, 30)
-    SIDE = QColor(40, 110, 220)
-
-    def __init__(self, app):
-        self.app = app
-        self.visible = True
-        self._key = None
-        self._pts = None
-        self._kinds = None
-
-    def _points(self, scene):
-        key = (id(scene), scene.version)
-        if key != self._key:
-            pts, kinds = [], []
-            for p in all_panels(scene):
-                for h in p.data["holes"]:
-                    w, _n = hole_world(p, h)
-                    pts.append(w)
-                    kinds.append(h["type"] == "face")
-            self._key = key
-            self._pts = np.array(pts, dtype=np.float64).reshape(-1, 3)
-            self._kinds = kinds
-        return self._pts, self._kinds
-
-    def __call__(self, viewport, painter):
-        if not self.visible:
-            return
-        pts, kinds = self._points(viewport.scene)
-        if not len(pts):
-            return
-        px, py, front = viewport.world_to_pixels(pts)
-        painter.setRenderHint(painter.RenderHint.Antialiasing)
-        for x, y, ok, face in zip(px, py, front, kinds):
-            if not ok:
-                continue
-            color = self.FACE if face else self.SIDE
-            painter.setPen(QPen(color, 2))
-            painter.setBrush(Qt.NoBrush if face else color)
-            painter.drawEllipse(QPointF(float(x), float(y)), 4.0, 4.0)
