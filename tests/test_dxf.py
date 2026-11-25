@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 import tempfile
 from pathlib import Path
@@ -19,6 +20,10 @@ _spec = importlib.util.spec_from_file_location("bs_dxf", PROJECT / "board_studio
 D = importlib.util.module_from_spec(_spec)
 sys.modules["bs_dxf"] = D
 _spec.loader.exec_module(D)
+
+_spec = importlib.util.spec_from_file_location("bs_outline", PROJECT / "board_studio" / "outline.py")
+O = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(O)
 
 FAILS = []
 
@@ -287,6 +292,127 @@ def test_flip():
         check(p.top(p.part.holes[0]), f"{grain}: the hole is on top")
 
 
+def rounded_part(**kw):
+    """500×400, правий верхній кут R100, крайка 2 мм на сторонах 1, 2 і дузі."""
+    arc = [(400 + 100 * math.cos(a), 300 + 100 * math.sin(a))
+           for a in (math.pi / 2 * i / 25 for i in range(26))]
+    c = math.sqrt(0.5)
+    return D.Part("R", 500, 400, 18, outline=[
+        D.Edge([(0, 0), (500, 0)], (250, 0), (1, 0)),
+        D.Edge([(500, 0), (500, 300)], (500, 150), (0, 1), 2),
+        D.Edge(arc, (400 + 100 * c, 300 + 100 * c), (-c, c), 2),
+        D.Edge([(400, 400), (0, 400)], (200, 400), (-1, 0), 2),
+        D.Edge([(0, 400), (0, 0)], (0, 200), (0, -1))], **kw)
+
+
+def test_rounded():
+    """Заокруглена деталь: контур різу з дугою, зсунутий на крайку; грань верху —
+    багатокутник; позначка крайки на дузі; переворот деталь не віддзеркалює."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "out.dxf"
+        D.export([rounded_part(grain="width")], path)
+        ents, _b, _s = F.load(path)
+        _validate_with_ezdxf(path)
+    cut = [e for e in ents if e.kind == "POLYLINE" and e.layer == "ABF_cuttingLines"]
+    check(len(cut) == 1 and cut[0].closed, "one closed contour")
+    pts = [(p[0] + 500, p[1]) for p in cut[0].points[:-1]]
+    check(all(abs(p[2] - 18) < 1e-6 for p in cut[0].points), "contour on the top face")
+    check((r(max(x for x, _ in pts)), r(max(y for _, y in pts))) == (498.0, 398.0)
+          and (r(min(x for x, _ in pts)), r(min(y for _, y in pts))) == (0.0, 0.0),
+          "contour inset by the band")
+    on_arc = [p for p in pts if p[0] > 401 and p[1] > 301]
+    check(len(on_arc) > 20 and all(abs(math.dist(p, (400, 300)) - 98) < 0.01 for p in on_arc),
+          "arc contour has radius R − band")
+    tops = [e for e in ents if e.kind == "POLYFACE" and e.color == 7]
+    want = 500 * 400 - (1 - math.pi / 4) * 1e4
+    check(len(tops) == 1 and len(tops[0].points) == 29, "one top face")
+
+    total = sum(abs((q[0] - p[0]) * (s[1] - p[1]) - (q[1] - p[1]) * (s[0] - p[0])) / 2
+                for p, q, s in ([tops[0].points[i] for i in f] for f in tops[0].faces))
+    check(abs(total - want) < 10, f"top face covered once: {total} vs {want}")
+    check(sum(e.kind == "POLYFACE" for e in ents) == 2 + 29, "side faces follow the arc")
+    marks = [[(x + 500, y) for x, y, _z in e.points[:3]] for e in ents
+             if e.layer == "ABF_edgeBanding" and e.kind == "POLYLINE"]
+    h, gap = D.mark_size(500, 400)
+    tips = [tuple(r(c) for c in m[0]) for m in marks]
+    k = 400 + (100 - gap - 2) * math.sqrt(0.5)
+    check((r(k), r(k - 100)) in tips and (r(498 - gap), 150.0) in tips
+          and (200.0, r(398 - gap)) in tips and len(tips) == 3, f"marks {tips}")
+    check(all(abs(math.dist(m[1], m[2]) - 2 * h) < 1e-6 for m in marks), "mark base")
+
+    # Обертання, а не дзеркало: у всіх орієнтаціях той самий обхід і та сама площа,
+    # отвір лишається на тій самій відстані від центра дуги.
+    for grain in ("length", "width"):
+        for top in (True, False):
+            hole = D.Hole("face", 380, 250, 8, 12, top=top)
+            p = D.Placed(rounded_part(grain=grain, holes=[hole]))
+            loop, bands = D.outline_loop(p.outline())
+            size = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1)
+                       in zip(loop, loop[1:] + loop[:1])) / 2
+            check(abs(size - want) < 10, f"{grain}/{top}: counter-clockwise, {size}")
+            check((r(max(x for x, _ in loop)), r(max(y for _, y in loop))) == (p.a, p.b),
+                  f"{grain}/{top}: inside the layout box")
+            centre = p.point(400, 300)
+            arc = [q for q, e in zip(loop, bands) if abs(math.dist(q, centre) - 100) < 1e-6]
+            check(len(arc) == 26, f"{grain}/{top}: arc kept")
+            check(sum(e == 2 for e in bands) == 27, f"{grain}/{top}: bands kept")
+    # Без крайки контур — сама деталь; увігнута деталь (Г-подібна) теж покрита раз.
+    ell = [(0, 0), (500, 0), (500, 200), (200, 200), (200, 400), (0, 400)]
+    tris = D.triangulate(ell)
+    check(len(tris) == 4 and abs(sum(
+        (ell[b][0] - ell[a][0]) * (ell[c][1] - ell[a][1])
+        - (ell[b][1] - ell[a][1]) * (ell[c][0] - ell[a][0]) for a, b, c in tris) / 2
+        - 140000) < 1e-6, "L-shape triangulated")
+    check(D.inset(ell, [0] * 6) == ell, "no band: contour as is")
+    got = D.inset(ell, [1, 0, 1, 0, 0, 0])
+    check(got == [(0, 1), (500, 1), (500, 199), (200, 199), (200, 400), (0, 400)],
+          f"bands at inner corners {got}")
+
+
+def test_outline():
+    """Дуги відновлюються з ламаної; кути, скоси й прямі дугами не стають."""
+    arc = [(100 - 100 * math.sin(a), 100 - 100 * math.cos(a))
+           for a in (math.pi / 2 * i / 8 for i in range(9))]          # від (100,0) до (0,100)
+    ccw = list(reversed(arc)) + [(300, 0), (500, 0), (500, 500), (0, 500)]
+    smooth = [True] * 9 + [False] * 4
+    curve = [1] * 8 + [None] * 5
+    segs = O.segments(ccw, smooth, curve, 500, 500)
+    check([s.key for s in segs if s.kind == "line"] == [2, 3, 0, 1], f"sides {segs}")
+    (a,) = [s for s in segs if s.kind == "arc"]
+    check(abs(a.radius - 100) < 1e-6 and abs(a.sweep - math.pi / 2) < 1e-6
+          and len(a.pts) == 9, "arc R100")
+    fine = a.fine()
+    check(fine[0] == a.pts[0] and fine[-1] == a.pts[-1]
+          and all(abs(math.dist(p, (100, 100)) - 100) < 1e-6 for p in fine), "points on the arc")
+    sag = 100 - math.dist([(u + v) / 2 for u, v in zip(*fine[:2])], (100, 100))
+    check(0 < sag <= O.CHORD_TOL + 1e-9, f"chord error {sag}")
+    mid, along = a.middle()
+    k = math.sqrt(0.5)
+    check(math.dist(mid, (100 - 100 * k, 100 - 100 * k)) < 1e-6
+          and math.dist(along, (k, -k)) < 1e-6, "arc middle")
+    # Без м'яких ребер і номерів кривих — лишаються відрізки.
+    flat = O.segments(ccw, [False] * 13, [None] * 13, 500, 500)
+    check(all(s.kind == "line" for s in flat), "no arc without a smooth edge")
+    # Скіс — окрема ділянка; коло — одна дуга; прямокутник — просто прямокутник.
+    cham = O.segments([(50, 0), (500, 0), (500, 400), (0, 400), (0, 50)], [False] * 5,
+                      [None] * 5, 500, 400)
+    check([s.kind for s in cham] == ["line"] * 5
+          and sum(s.side is None for s in cham) == 1 and not O.is_box(cham), "chamfer")
+    disc = O.segments([(200 + 200 * math.cos(t), 200 + 200 * math.sin(t))
+                       for t in (2 * math.pi * i / 24 for i in range(24))],
+                      [True] * 24, [3] * 24, 400, 400)
+    check(len(disc) == 1 and disc[0].kind == "arc"
+          and abs(disc[0].sweep - 2 * math.pi) < 1e-6, f"disc {[s.kind for s in disc]}")
+    check(O.is_box(O.segments([(0, 0), (250, 0), (500, 0), (500, 400), (0, 400)],
+                              [False] * 5, [None] * 5, 500, 400)), "split side is one side")
+    # Увігнута дуга (виріз) — від'ємний кут.
+    notch = [(100 * math.cos(t), 100 * math.sin(t)) for t in (math.pi / 2 * i / 6 for i in range(7))]
+    segs = O.segments([(0, 400), *reversed(notch), (500, 0), (500, 400)][::1], [False]
+                      + [True] * 7 + [False] * 2, [None] + [2] * 6 + [None] * 3, 500, 400)
+    (a,) = [s for s in segs if s.kind == "arc"]
+    check(a.sweep < 0 and abs(a.radius - 100) < 1e-6, f"concave arc {a.sweep}")
+
+
 def test_edge_mark_sizes():
     for a, b, h, gap in ((200, 300, 17.978058, 2.568294), (300, 500, 25.918367, 4.319728),
                          (500, 500, 35.398582, 7.079716)):
@@ -305,11 +431,19 @@ def _validate_with_ezdxf(path):
 
 
 def main():
-    test_against_sample()
+    # Зразки ABF (viyar/dfx, viyar/diff) у репозиторії можуть бути відсутні.
+    for test, sample in (
+            (test_against_sample, SAMPLES / "300x500+200-конфірмат+кромка-flatten.dxf"),
+            (test_against_origin, PROJECT / "viyar" / "diff" / "origin.dxf"),
+            (test_flip, PROJECT / "viyar" / "diff" / "дві панелі міксфіксом і шкантом.dxf")):
+        if sample.exists():
+            test()
+        else:
+            print(f"SKIPPED {test.__name__}: no sample {sample.relative_to(PROJECT)}")
+    test_rounded()
+    test_outline()
     test_grain_and_names()
     test_abf_structure()
-    test_against_origin()
-    test_flip()
     test_edge_mark_sizes()
     if FAILS:
         sys.exit(f"\n{len(FAILS)} failure(s)")

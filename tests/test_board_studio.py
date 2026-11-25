@@ -555,6 +555,213 @@ def test_edge_band_tool(t):
     check(P.panel_data(g)["edges"][1] == 0.8, "undo brings the band back")
 
 
+def round_corner(group, r, n=8):
+    """Заокруглити кут панелі біля (0, 0): сітка як після дуги й Push/Pull."""
+    from core.mesh import Mesh
+    pts = [p for f in group.mesh.faces for p in f.vertices]
+    x1, y1 = max(p.x() for p in pts), max(p.y() for p in pts)
+    z0, z1 = min(p.z() for p in pts), max(p.z() for p in pts)
+    a = [math.pi / 2 * i / n for i in range(n + 1)]
+    arc = [(r - r * math.sin(t), r - r * math.cos(t)) for t in a]     # (r,0) → (0,r)
+    xy = arc[::-1] + [(x1, 0.0), (x1, y1), (0.0, y1)]                 # проти стрілки
+    m = Mesh()
+    m.add_face([V(x, y, z1) for x, y in xy])
+    m.add_face([V(x, y, z0) for x, y in xy[::-1]])
+    for i, ((ax, ay), (bx, by)) in enumerate(zip(xy, xy[1:] + xy[:1])):
+        m.add_face([V(ax, ay, z0), V(bx, by, z0), V(bx, by, z1), V(ax, ay, z1)])
+        for z in (z0, z1):
+            e = m.find_edge(m.vertex(V(ax, ay, z)), m.vertex(V(bx, by, z)))
+            if i < n:
+                e.curve = 1 if z == z0 else 2
+        if i <= n:
+            m.find_edge(m.vertex(V(ax, ay, z0)), m.vertex(V(ax, ay, z1))).soft = True
+    group.mesh = m
+
+
+def test_rounded_panel(t):
+    """Заокруглений кут: дуга — окремий торець для крайки (підсвітка, фарба, undo,
+    збереження) і потрапляє в DXF; розмір деталі змінюється — крайка лишається."""
+    import tempfile
+    from core.history import History
+    from core.scene import Scene
+    from formats import igz
+    P = importlib.import_module("ingetrazo_plugin_board_studio.panels")
+    E = importlib.import_module("ingetrazo_plugin_board_studio.edgeband")
+    L = importlib.import_module("ingetrazo_plugin_board_studio.library")
+    D = importlib.import_module("ingetrazo_plugin_board_studio.dxf")
+    scene = Scene()
+    hist = History(scene)
+    vp = FakeViewport(scene, hist)
+    g = make_panel(t, vp, V(0, 0, 0), V(0.6, 0, 0), V(0.6, 0.4, 0))
+    plain = P.Panel(g)
+    check(plain.is_box and plain.dxf_part().outline == [], "plain panel stays a box")
+    round_corner(g, 0.1)
+    p = P.Panel(g)
+    check(not p.is_box and [s.kind for s in p.outline()].count("arc") == 1
+          and sorted(s.side for s in p.outline() if s.side is not None) == [0, 1, 2, 3],
+          f"outline {[(s.kind, s.key) for s in p.outline()]}")
+    arc = [f for f in g.mesh.faces if isinstance(p.edge_key(f), tuple)]
+    check(len(arc) == 8 and len({p.edge_key(f) for f in arc}) == 1, "arc faces share one key")
+    tops = [f for f in g.mesh.faces if p.classify(f) in ("top", "bottom")]
+    check(all(p.edge_key(f) is None for f in tops), "faces are not edges")
+
+    tool = E.EdgeBandTool()
+    tool.band = L.find(L.edges(), "pvc_20")
+    tool.on_activate(vp)
+    vp.picked = arc[0]
+    tool.on_hover(ctx(vp, V(0, 0, 0)))
+    check(len(tool.preview_faces()) == 8, "the whole arc is previewed")
+    vp.picked = arc[5]                              # та сама дуга, інший відрізок
+    tool.on_click(ctx(vp, V(0, 0, 0)))
+    key = p.edge_key(arc[0])
+    p = P.Panel(g)
+    check(p.bands() == {key: (E.band_snapshot(tool.band), 2.0)}
+          and p.data["edges"] == [0.0] * 4, f"arc banded {p.bands()}")
+    quads = tool.highlight_faces(scene)
+    check(len(quads) == 8 and all(abs(math.hypot(v.x() - 0.1, v.y() - 0.1) - 0.1003) < 5e-5
+                                  for f in quads for v in f.vertices), "highlight off the arc")
+    oak = P.paint("oak", V(1, 0, 0), V(0, 1, 0))["mat"]
+    check(all(f.attrs["mat"] == oak for f in arc), "arc painted with the decor")
+
+    # Текстура на дузі без розривів: на спільному ребрі граней координата та сама.
+    def u(face, v):
+        k = face.attrs["texture"]["uvw"]
+        return k[0] * v.x() + k[1] * v.y() + k[2] * v.z() + k[3]
+    for a in arc:
+        for b in arc:
+            for v in set(a.loop) & set(b.loop):
+                check(abs(u(a, v.position) - u(b, v.position)) < 1e-4, "texture runs along the arc")
+
+    side = next(f for f in g.mesh.faces if p.classify(f) == 0)
+    vp.picked = side
+    tool.on_click(ctx(vp, V(0, 0, 0)))
+    check(set(P.Panel(g).bands()) == {0, key} and len(tool.highlight_faces(scene)) == 9,
+          "a straight side as before")
+    quad = next(f for f in tool.highlight_faces(scene)
+                if all(abs(v.y() + 0.0003) < 1e-5 for v in f.vertices))
+    check(abs(min(v.x() for v in quad.vertices) - 0.1) < 1e-5, "side highlight stops at the arc")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "r.igz"
+        igz.save_scene(scene, path)
+        again = Scene()
+        igz.load_into(again, path)
+    bands = P.all_panels(again)[0].bands()
+    check(sorted(str(type(k)) for k in bands) == sorted(str(type(k)) for k in (0, key)),
+          f"saved and loaded {bands}")
+
+    part = P.Panel(g).dxf_part()
+    check(len(part.outline) == 5 and sorted(e.band for e in part.outline) == [0, 0, 0, 2, 2],
+          f"DXF outline {[(len(e.pts), e.band) for e in part.outline]}")
+    loop, bands = D.outline_loop(D.Placed(part).outline())
+    check(len(loop) > 25, "arc in the DXF")
+    check(all(math.dist(a.pts[-1], b.pts[0]) == 0 for a, b
+              in zip(part.outline, part.outline[1:] + part.outline[:1])), "closed outline")
+
+    # Інший радіус і розмір: крайка дуги лишається на ній.
+    round_corner(g, 0.05)
+    check(any(isinstance(k, tuple) for k in P.Panel(g).bands()), "band follows the new radius")
+    round_corner(g, 0.1)
+    vp.picked = next(f for f in g.mesh.faces if isinstance(P.Panel(g).edge_key(f), tuple))
+    tool.on_click(ctx(vp, V(0, 0, 0)))
+    check(set(P.Panel(g).bands()) == {0} and P.panel_data(g)["extra_bands"] == [],
+          "second click removes")
+    hist.undo()
+    check(len(P.Panel(g).bands()) == 2, "undo brings the arc band back")
+
+
+def test_rounded_joints(t):
+    """Кріплення не стає там, де торець чи пласть заокруглено або вирізано."""
+    from core.history import History
+    from core.mesh import Mesh
+    from core.scene import Scene
+    P = importlib.import_module("ingetrazo_plugin_board_studio.panels")
+    J = importlib.import_module("ingetrazo_plugin_board_studio.joints")
+    FX = importlib.import_module("ingetrazo_plugin_board_studio.fasteners")
+    L = importlib.import_module("ingetrazo_plugin_board_studio.library")
+    O = importlib.import_module("ingetrazo_plugin_board_studio.outline")
+    ui = importlib.import_module("ingetrazo_plugin_board_studio.ui")
+    conf = L.find(L.fasteners(), "confirmat_7x50")
+
+    def scene_of():
+        scene = Scene()
+        return scene, FakeViewport(scene, History(scene))
+
+    def spans(a, b):
+        return [(j[0], round(j[2] * 1000), round(j[3] * 1000))
+                for j in J.joints(P.Panel(a), P.Panel(b))]
+
+    # Торець полиці (x = 0) на пласті стінки; кут полиці біля (0, 0) — R100.
+    scene, vp = scene_of()
+    shelf = make_panel(t, vp, V(0, 0, 0), V(0.6, 0, 0), V(0.6, 0.4, 0))
+    wall = make_panel(t, vp, V(-0.016, 0, -0.3), V(-0.016, 0.4, -0.3), V(-0.016, 0.4, 0.4))
+    check(spans(shelf, wall) == [(3, 0, 400)], f"square joint {spans(shelf, wall)}")
+    scene.selection.update([shelf, wall])
+    app = SimpleNamespace(viewport=vp, window=None)
+    ui.place_fastener(app, "confirmat_7x50")
+    check(FX.misplaced(P.Panel(shelf)) == 0, "nothing is off a square panel")
+    round_corner(shelf, 0.1)
+    check(spans(shelf, wall) == [(3, 100, 400)], f"joint stops at the arc {spans(shelf, wall)}")
+    check(FX.misplaced(P.Panel(shelf)) == 1, "the hole left on the arc is reported")
+    said, real = [], ui.QMessageBox.warning
+    ui.QMessageBox.warning = staticmethod(lambda _p, _t, text: said.append(text))
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        ui.export_dxf(app, str(Path(tmp) / "a.dxf"))
+        check(len(said) == 1 and f"{shelf.name} (1)" in said[0], f"export warns {said}")
+        ui.remove_fasteners(app)
+        ui.place_fastener(app, "confirmat_7x50")
+        ui.export_dxf(app, str(Path(tmp) / "b.dxf"))
+    ui.QMessageBox.warning = real
+    check(len(said) == 1, "no warning after placing again")
+    ys = sorted(round(h["y"]) for h in P.panel_data(shelf)["holes"])
+    check(ys == [137, 363], f"places from the end of the straight part {ys}")
+    for p in (P.Panel(shelf), P.Panel(wall)):
+        for h in p.data["holes"]:
+            check(h["type"] == "face" or h["side"] == 3, "holes on the joint")
+    worlds = [sorted(round(float(J.hole_world(P.Panel(g), h)[0][1]), 4)
+                     for h in P.panel_data(g)["holes"]) for g in (shelf, wall)]
+    check(worlds[0] == worlds[1] == [0.137, 0.363], f"pairs line up {worlds}")
+
+    # Заокруглено пласть: бокова на дні, лінія x = 24 заходить на дно з y ≈ 35.
+    scene, vp = scene_of()
+    bottom = make_panel(t, vp, V(0, 0, 0), V(0.6, 0, 0), V(0.6, 0.4, 0))
+    side = make_panel(t, vp, V(0.016, 0, 0.016), V(0.016, 0.4, 0.016), V(0.016, 0.4, 0.736))
+    round_corner(bottom, 0.1)
+    check(spans(side, bottom) == [(0, 35, 400)], f"face joint stops at the arc {spans(side, bottom)}")
+    cands, _ = FX.candidates([P.Panel(side), P.Panel(bottom)], conf, offset=2)
+    check(all(FX._inside(P.Panel(bottom), h["x"], h["y"], h["d"] / 2)
+              for c in cands for p, h in c.holes if h["type"] == "face")
+          and len(cands) == 1, f"a hole over the arc is not suggested {[c.u for c in cands]}")
+
+    # Виріз у торці полиці: два окремі стики, ключі різні.
+    scene, vp = scene_of()
+    shelf = make_panel(t, vp, V(0, 0, 0), V(0.6, 0, 0), V(0.6, 0.4, 0))
+    wall = make_panel(t, vp, V(-0.016, 0, -0.3), V(-0.016, 0.4, -0.3), V(-0.016, 0.4, 0.4))
+    xy = [(0, 0), (0.6, 0), (0.6, 0.4), (0, 0.4), (0, 0.25), (0.05, 0.25), (0.05, 0.15), (0, 0.15)]
+    z = [round(v, 4) for v in sorted({p.z() for f in shelf.mesh.faces for p in f.vertices})]
+    m = Mesh()
+    m.add_face([V(x, y, z[1]) for x, y in xy])
+    m.add_face([V(x, y, z[0]) for x, y in xy[::-1]])
+    for (ax, ay), (bx, by) in zip(xy, xy[1:] + xy[:1]):
+        m.add_face([V(ax, ay, z[0]), V(bx, by, z[0]), V(bx, by, z[1]), V(ax, ay, z[1])])
+    shelf.mesh = m
+    check(sorted(spans(shelf, wall)) == [(3, 0, 150), (3, 250, 400)],
+          f"a notch splits the joint {spans(shelf, wall)}")
+    cands, _ = FX.candidates([P.Panel(shelf), P.Panel(wall)], conf)
+    check(len(cands) == 4 and len({c.key for c in cands}) == 4,
+          f"each part has its own places {[c.key for c in cands]}")
+
+    # Отвір з торця, що вийшов би в сусідній виріз (вглиб 34 мм, стінка 10 мм).
+    plate = [(0.0, 0.0), (200.0, 0.0), (200.0, 10.0), (50.0, 10.0), (50.0, 100.0), (0.0, 100.0)]
+    check(O.clear([plate], (25.0, 4.0), (25.0, 34.0), 4.0)
+          and not O.clear([plate], (120.0, 4.0), (120.0, 34.0), 4.0)
+          and not O.clear([plate], (48.0, 4.0), (48.0, 34.0), 4.0), "holes keep inside the material")
+    hole = [(20.0, 30.0), (30.0, 30.0), (30.0, 60.0), (20.0, 60.0)]
+    check(O.spans([plate, hole], (0.0, 45.0), (50.0, 45.0)) == [(0.0, 0.4), (0.6, 1.0)],
+          "an inner cutout splits the face")
+
+
 def test_hole_marks(t):
     """Позначки отворів: видно — суцільні, всередині — пунктир, за чужою
     панеллю — не малюються."""
@@ -839,6 +1046,8 @@ def main():
     test_panels(t)
     test_properties_dialog(t)
     test_edge_band_tool(t)
+    test_rounded_panel(t)
+    test_rounded_joints(t)
     test_hole_marks(t)
     test_drawing(t)
     test_library_and_settings(t)

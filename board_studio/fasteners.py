@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 
+from . import outline
 from .joints import joints, side_frame
 
 TOL = 0.01      # мм: координати моделі — float32, товщина 16 може бути 15.9999
@@ -71,8 +72,33 @@ def _r(v):
 
 
 def _inside(panel, x, y, r):
+    """Чи круглий отвір у пласті не виходить за контур."""
     L, W, _T = panel.mm
-    return r - 1e-6 <= x <= L - r + 1e-6 and r - 1e-6 <= y <= W - r + 1e-6
+    if not (r - 1e-6 <= x <= L - r + 1e-6 and r - 1e-6 <= y <= W - r + 1e-6):
+        return False
+    loops = panel.material()
+    return not loops or outline.clear(loops, (x, y), (x, y), r)
+
+
+def _edge_fits(panel, side, x, y, r, depth):
+    """Чи отвір з торця непрямокутної деталі весь у матеріалі."""
+    loops = panel.material()
+    if not loops:
+        return True
+    dx, dy = ((0, 1), (-1, 0), (0, -1), (1, 0))[side]
+    end = max(depth or 0.0, r)
+    return outline.clear(loops, (x + dx * r, y + dy * r), (x + dx * end, y + dy * end), r)
+
+
+def misplaced(panel):
+    """Скільки отворів панелі виходять за її контур — напр. кут заокруглено
+    після встановлення кріплення."""
+    if not panel.material():
+        return 0
+    return sum(not (_inside(panel, h["x"], h["y"], h["d"] / 2) if h["type"] == "face" else
+                    _edge_fits(panel, h.get("side", 0), h["x"], h["y"], h["d"] / 2,
+                               h.get("depth")))
+               for h in panel.data["holes"])
 
 
 class Candidate:
@@ -89,7 +115,7 @@ class Candidate:
         self.point, self.inward, self.along = point, inward, along
         self.holes, self.installed = holes, installed
         self.joint = joint_id(a, b)
-        self.key = (self.joint, side, bool(top), round(u, 1))
+        self.key = (self.joint, side, bool(top), round(u0 * 1000 + u, 1))
 
     @property
     def label(self):
@@ -172,6 +198,8 @@ def _batch(f, a, b, side, top, inner_top, mid, along, inward, u0, length, u):
         where = h["where"]
         if where == "edge":
             x, y, z = a.to_local_mm(p)
+            if not _edge_fits(a, side, float(x), float(y), h["d"] / 2, h["depth"]):
+                return None
             batch.append((a, {"type": "side", "side": side, "x": _r(x), "y": _r(y),
                               "z": _r(z), "d": h["d"], "depth": h["depth"]}))
             continue
@@ -181,7 +209,7 @@ def _batch(f, a, b, side, top, inner_top, mid, along, inward, u0, length, u):
         else:
             panel, face_top = b, (top if where == "joint_face" else not top)
         x, y, _z = panel.to_local_mm(p)
-        if not _inside(panel, x, y, h["d"] / 2):
+        if not _inside(panel, float(x), float(y), h["d"] / 2):
             return None
         hole = {"type": "face", "x": _r(x), "y": _r(y), "top": face_top, "d": h["d"],
                 "depth": h["depth"], "article": h.get("article", "")}

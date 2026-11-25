@@ -604,8 +604,19 @@ def export_dxf(app, path=None):
             path += ".dxf"
     try:
         export([p.dxf_part() for p in panels], path)
+        lost = [p.name for p in panels if p.cutouts or not p.outline()]
+        off = [f"{p.name} ({n})" for p in panels if (n := fasteners.misplaced(p))]
     except OSError as exc:
         QMessageBox.warning(app.window, "Board Studio", f"Export error: {exc}")
         return None
+    warn = []
+    if lost:
+        warn.append("Експортовано, але форму передано не повністю (внутрішні вирізи чи "
+                    "нерозпізнаний контур): " + ", ".join(lost))
+    if off:
+        warn.append("Отвори за контуром панелі — приберіть кріплення й поставте знову: "
+                    + ", ".join(off))
+    if warn:
+        QMessageBox.warning(app.window, "Board Studio", "\n\n".join(warn))
     _status(vp, f"{len(panels)} panel(s) exported to {path}", 6000)
     return path

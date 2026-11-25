@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from . import outline
+
 PLANE_TOL = 0.0005      # м: торець «на» пласті, якщо площини ближчі за 0.5 мм
 PARALLEL = 0.999
 
@@ -36,12 +38,27 @@ def _clip(q0, dq, lo, hi):
     return (u0, u1) if u1 > u0 else None
 
 
+def _face_spans(b, q0, dq):
+    """Частини відрізка q0 + dq·u (локальні м панелі ``b``), що лежать на пласті."""
+    span = _clip(q0, dq, np.zeros(2), np.array(b.size[:2]))
+    if span is None:
+        return []
+    loops = b.material()
+    if not loops:
+        return [span]
+    u0, u1 = span
+    p, q = (tuple(float(v) for v in (q0 + dq * u) * 1000) for u in span)
+    return [(u0 + (u1 - u0) * s, u0 + (u1 - u0) * e) for s, e in outline.spans(loops, p, q)]
+
+
 def joints(a, b):
     """Стики «торець ``a`` на пласті ``b``»: ``[(side, top, u0, u1)]`` —
-    відрізок торця (м від його початку), де лінія шкантів лежить на пласті."""
+    відрізок торця (м від його початку), де лінія шкантів лежить на пласті.
+    Заокруглення, скоси й вирізи обох панелей у стик не входять, тож на одному
+    торці може бути кілька стиків."""
     out = []
     zb = b.R[:, 2]
-    Lb, Wb, Tb = b.size
+    Tb = b.size[2]
     for side in range(4):
         start, along, length, outward = side_frame(a, side)
         for top in (True, False):
@@ -54,9 +71,11 @@ def joints(a, b):
             mid = start + a.R[:, 2] * (a.size[2] / 2)
             q0 = ((mid - b.origin) @ b.R)[:2]
             dq = ((along * length) @ b.R)[:2]
-            span = _clip(q0, dq, np.zeros(2), np.array([Lb, Wb]))
-            if span:
-                out.append((side, top, span[0] * length, span[1] * length))
+            for u0, u1 in _face_spans(b, q0, dq):
+                for s0, s1 in a.side_spans(side):
+                    lo, hi = max(u0 * length, s0 / 1000), min(u1 * length, s1 / 1000)
+                    if hi - lo > 1e-6:
+                        out.append((side, top, lo, hi))
     return out
 
 

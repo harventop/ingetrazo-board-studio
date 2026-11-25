@@ -4,12 +4,14 @@
 кольором (грані попереднього перегляду, з глибиною — як у Push/Pull), а
 торець під курсором показує, що станеться після кліку.
 
-Крайка панелі — ``data["bands"][side]`` (знімок із бібліотеки: ключ, назва,
-колір, товщина) і ``data["edges"][side]`` — товщина для DXF.
+Крайка сторони панелі — ``data["bands"][side]`` (знімок із бібліотеки: ключ,
+назва, колір, товщина) і ``data["edges"][side]`` — товщина для DXF; крайка дуг і
+скосів — ``data["extra_bands"]`` (див. :meth:`.panels.Panel.bands`).
 """
 from __future__ import annotations
 
 import copy
+import math
 
 from PySide6.QtGui import QColor
 from PySide6.QtGui import QVector3D as V
@@ -48,6 +50,24 @@ def side_quad(panel, side, lift=LIFT):
     return loop
 
 
+def edge_quads(panel, key, lift=LIFT):
+    """Чотирикутники підсвітки торця ``key``: сторони прямокутної деталі — один,
+    заокругленої — по одному на відрізок."""
+    if panel.is_box:
+        return [side_quad(panel, key, lift)]
+    T, out = panel.mm[2], []
+    for seg in panel.outline():
+        if seg.key != key:
+            continue
+        for (x0, y0), (x1, y1) in zip(seg.pts, seg.pts[1:]):
+            d = math.hypot(x1 - x0, y1 - y0)
+            nx, ny = (y1 - y0) / d * lift, (x0 - x1) / d * lift         # назовні
+            out.append([V(*map(float, panel.to_world(p))) for p in (
+                (x0 + nx, y0 + ny, 0), (x1 + nx, y1 + ny, 0),
+                (x1 + nx, y1 + ny, T), (x0 + nx, y0 + ny, T))])
+    return out
+
+
 class EdgeBandTool(Tool):
     name = "Edge Banding"
     icon = "paint"
@@ -84,7 +104,8 @@ class EdgeBandTool(Tool):
         return self._faces
 
     def pick(self, viewport, x, y):
-        """``(Panel, side)`` під курсором або ``None``."""
+        """``(Panel, торець)`` під курсором або ``None``; торець — сторона 0..3 або
+        ключ дуги чи скосу (:meth:`.panels.Panel.edge_key`)."""
         face, _owner = viewport.pick_face_any(x, y)
         if face is None:
             return None
@@ -92,8 +113,8 @@ class EdgeBandTool(Tool):
         if hit is None:
             return None
         panel = Panel(*hit)
-        side = panel.classify(face)
-        return (panel, side) if isinstance(side, int) else None
+        key = panel.edge_key(face)
+        return (panel, key) if key is not None else None
 
     # ---- Миша ----
     def on_hover(self, ctx):
@@ -116,14 +137,12 @@ class EdgeBandTool(Tool):
             return
         panel, side = hit
         data = copy.deepcopy(panel.data)
-        current = data["bands"][side]
+        current = panel.bands(data).get(side, (None, 0.0))[0]
         if current is not None and current.get("key") == self.band.get("key"):
-            data["bands"][side] = None
-            data["edges"][side] = 0.0
+            panel.set_band(data, side, None, 0.0)
             text = f"{self.band['name']} removed"
         else:
-            data["bands"][side] = band_snapshot(self.band)
-            data["edges"][side] = float(self.band["thickness"])
+            panel.set_band(data, side, band_snapshot(self.band), self.band["thickness"])
             text = f"{self.band['name']} added"
         err = update_panels(vp, [(panel, data)])
         vp.flash_status(f"Edge band not changed: {err}" if err else
@@ -149,20 +168,20 @@ class EdgeBandTool(Tool):
     def _highlight(self, scene):
         faces = []
         for g, m in iter_panels(scene):
-            panel = None
             data = panel_data(g)
-            for side in range(4):
-                band = data["bands"][side]
-                hovered = (self.hover is not None and self.hover[0].group is g
-                           and self.hover[1] == side)
-                if band is None and not data["edges"][side] and not hovered:
-                    continue
-                panel = panel or Panel(g, m)
-                if hovered:
-                    color = self._hover_color(band)
-                else:
-                    color = rgb((band or {}).get("color") or OLD_BAND)
-                faces.append(Face(vertices=side_quad(panel, side), attrs={"color": color}))
+            hovered = self.hover[1] if self.hover and self.hover[0].group is g else None
+            if hovered is None and not (any(data["edges"]) or any(data["bands"])
+                                        or data["extra_bands"]):
+                continue
+            panel = Panel(g, m)
+            bands = panel.bands(data)
+            for key in [*bands, *([hovered] if hovered not in bands and hovered is not None
+                                  else [])]:
+                band = bands.get(key, (None, 0.0))[0]
+                color = self._hover_color(band) if key == hovered \
+                    else rgb((band or {}).get("color") or OLD_BAND)
+                faces += [Face(vertices=quad, attrs={"color": color})
+                          for quad in edge_quads(panel, key)]
         return faces
 
     def _hover_color(self, band):

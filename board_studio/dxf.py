@@ -53,6 +53,16 @@ class Hole:
 
 
 @dataclass
+class Edge:
+    """Ділянка контуру непрямокутної деталі (локальні мм, обхід проти стрілки):
+    точки разом з обома кінцями, середина, напрямок у ній і товщина крайки."""
+    pts: list
+    middle: tuple
+    along: tuple
+    band: float = 0.0
+
+
+@dataclass
 class Part:
     name: str
     length: float
@@ -65,6 +75,9 @@ class Part:
     article: str = ""
     decor: str = ""
     holes: list = field(default_factory=list)
+    #: Контур непрямокутної деталі — список :class:`Edge`; порожній — прямокутник
+    #: ``length`` × ``width`` з крайкою ``edges``.
+    outline: list = field(default_factory=list)
 
 
 # ---- Назви -----------------------------------------------------------------------
@@ -145,6 +158,23 @@ class Placed:
         X, Y = (self.part.width - y, x) if self.rot else (x, y)
         return (X, self.b - Y) if self.flip else (X, Y)
 
+    def outline(self):
+        """Контур деталі в розкладці, проти стрілки: від нижнього правого кута
+        (найнижча вершина, з них — найправіша)."""
+        edges = []
+        for e in self.part.outline:
+            pts = [self.point(*p) for p in e.pts]
+            x0, y0 = self.point(0.0, 0.0)
+            x, y = self.point(*e.along)
+            along = (x - x0, y - y0)
+            if self.flip:
+                pts.reverse()
+                along = (-along[0], -along[1])
+            edges.append(Edge(pts, self.point(*e.middle), along, float(e.band or 0.0)))
+        if self.flip:
+            edges.reverse()
+        return edges
+
     def side(self, s):
         s = (s + 1) % 4 if self.rot else s
         return (2, 1, 0, 3)[s] if self.flip else s
@@ -199,14 +229,102 @@ def cut_contour(a, b, edges):
     return pts if any(e > 0 for e in edges) else pts[3:] + pts[:3]
 
 
+def outline_loop(edges):
+    """``(точки, товщини крайки)`` контуру; ``k``-те ребро — від точки k до k+1.
+    Починається з найнижчої, з них — найправішої вершини."""
+    pts, bands = [], []
+    for e in edges:
+        pts += e.pts[:-1]
+        bands += [e.band] * (len(e.pts) - 1)
+    k = min(range(len(pts)), key=lambda i: (round(pts[i][1], 3), -round(pts[i][0], 3)))
+    return pts[k:] + pts[:k], bands[k:] + bands[:k]
+
+
+def outline_faces(pts, t):
+    """Грані деталі з контуром ``pts``: як :func:`box_faces` — верх, низ, далі
+    бічні за годинниковою стрілкою від першої точки."""
+    def up(c):
+        return tuple(c) + (t,)
+
+    def dn(c):
+        return tuple(c) + (0.0,)
+    back = [pts[0]] + pts[:0:-1]                # за стрілкою
+    pairs = list(zip(back, back[1:] + back[:1]))
+    faces = [([up(c) for c in pts], [(up(c), up(d)) for c, d in pairs]),
+             ([dn(c) for c in back], [(dn(c), dn(d)) for c, d in pairs])]
+    for c, d in pairs:
+        faces.append(([up(c), up(d), dn(d), dn(c)],
+                      [(up(c), up(d)), (up(d), dn(d)), (dn(c), dn(d)), (up(c), dn(c))]))
+    return faces
+
+
+def inset(pts, bands):
+    """Контур проти стрілки, зсунутий усередину: кожне ребро — на свою крайку."""
+    n, out = len(pts), []
+    for i, p in enumerate(pts):
+        e1, e2 = bands[i - 1], bands[i]
+        d1 = _unit2(p, pts[i - 1])
+        d2 = _unit2(pts[(i + 1) % n], p)
+        n1, n2 = (-d1[1], d1[0]), (-d2[1], d2[0])
+        dot = n1[0] * n2[0] + n1[1] * n2[1]
+        cross = n1[0] * n2[1] - n1[1] * n2[0]
+        if abs(e1 - e2) < 1e-9 and dot > -0.9:
+            k = e1 / (1 + dot)
+            out.append((p[0] + (n1[0] + n2[0]) * k, p[1] + (n1[1] + n2[1]) * k))
+        elif abs(cross) > 0.5:
+            out.append((p[0] + (e1 * n2[1] - e2 * n1[1]) / cross,
+                        p[1] + (e2 * n1[0] - e1 * n2[0]) / cross))
+        else:                                   # майже пряма, крайка різна — сходинка
+            out += [(p[0] + n1[0] * e1, p[1] + n1[1] * e1),
+                    (p[0] + n2[0] * e2, p[1] + n2[1] * e2)]
+    return out
+
+
+def _unit2(b, a):
+    x, y = b[0] - a[0], b[1] - a[1]
+    d = math.hypot(x, y)
+    return x / d, y / d
+
+
+def outline_marks(edges, a, b):
+    """Трикутники-позначки крайки для ділянок контуру: вершина — біля середини
+    ділянки, дивиться назовні (для прямих сторін — як :func:`edge_marks`)."""
+    h, gap = mark_size(a, b)
+    out = []
+    for e in edges:
+        if e.band <= 0:
+            continue
+        (tx, ty), (mx, my) = e.along, e.middle
+        nx, ny = -ty, tx                        # всередину
+        x, y = mx + nx * (gap + e.band), my + ny * (gap + e.band)
+        out.append([(x, y), (x + (nx - tx) * h, y + (ny - ty) * h),
+                    (x + (nx + tx) * h, y + (ny + ty) * h)])
+    return out
+
+
+def mark_order(e):
+    """Порядок позначок як в ABF: низ, ліво, право, верх; похилі — до найближчої."""
+    nx, ny = e.along[1], -e.along[0]            # назовні
+    k = max(range(4), key=lambda s: round(nx * OUTWARD[s][0] + ny * OUTWARD[s][1], 6))
+    return (0, 3, 1, 2).index(k)
+
+
 def panel_entities(p, blocks, counter):
     """Вміст блоку деталі: брусок, отвори, контур різу, позначки кромки.
     Початок координат блоку — правий нижній кут деталі (див. box_faces)."""
     a, b, t = p.a, p.b, p.t
-    banded = any(e > 0 for e in p.edges)
+    shape = sorted(p.outline(), key=mark_order) if p.part.outline else []
+    if shape:
+        loop, bands = outline_loop([Edge([(x - a, y) for x, y in e.pts], e.middle, e.along, e.band)
+                                    for e in p.outline()])
+        banded = any(e > 0 for e in bands)
+        faces = outline_faces(loop, t)
+    else:
+        banded = any(e > 0 for e in p.edges)
+        faces = box_faces(a, b, t)
     line_layer = "0" if banded else "ABF_cuttingLines"
     ents = []
-    for k, (quad, lines) in enumerate(box_faces(a, b, t)):
+    for k, (quad, lines) in enumerate(faces):
         ents.append(("POLYFACE", "0", 7 if k == 0 else 0, quad))
         ents += [("LINE", line_layer, 0, p1, p2) for p1, p2 in lines]
 
@@ -238,14 +356,24 @@ def panel_entities(p, blocks, counter):
             ents.append(("INSERT", "0", name, (X, Y, t), "_ABF_sideDrillDepth"))
 
     name = f"Group{next(counter)}#1"
-    blocks[name] = [("POLY", "ABF_cuttingLines", 0, cut_contour(a, b, p.edges))]
+    if shape:
+        contour = [(x, y, 0.0) for x, y in inset(loop, bands)]
+        if not banded:                          # як cut_contour
+            contour = contour[-1:] + contour[:-1]
+    else:
+        contour = cut_contour(a, b, p.edges)
+    blocks[name] = [("POLY", "ABF_cuttingLines", 0, contour)]
     ents.append(("INSERT", "ABF_cuttingLines", name, (0.0, 0.0, t), "_ABF_cuttingLines"))
 
     if banded:
         name = f"Group{next(counter)}#1"
-        marks = edge_marks(a, b, p.edges)
-        blocks[name] = [("POLY", "ABF_edgeBanding", 0, [(x - a, y) for x, y in marks[s]])
-                        for s in (0, 3, 1, 2) if p.edges[s] > 0]
+        if shape:
+            tips = outline_marks(shape, a, b)
+        else:
+            marks = edge_marks(a, b, p.edges)
+            tips = [marks[s] for s in (0, 3, 1, 2) if p.edges[s] > 0]
+        blocks[name] = [("POLY", "ABF_edgeBanding", 0, [(x - a, y) for x, y in mark])
+                        for mark in tips]
         ents.append(("INSERT", "ABF_edgeBanding", name, (0.0, 0.0, t), "_ABF_edgeBanding"))
     # Мітку напрямку текстури ABF (трикутник + ромб, шар ABF_Label) не
     # малюємо: напрямок задає орієнтація деталі в розкладці (текстура — по Y).
@@ -373,6 +501,61 @@ def _cross(a, b):
     return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
 
 
+def _normal(q):
+    """Нормаль грані (не одинична); багатокутника — за Ньюеллом."""
+    if len(q) == 4:
+        return _cross(tuple(b - a for a, b in zip(q[0], q[1])),
+                      tuple(b - a for a, b in zip(q[0], q[2])))
+    total = (0.0, 0.0, 0.0)
+    for a, b in zip(q, q[1:] + q[:1]):
+        total = tuple(s + c for s, c in zip(total, _cross(a, b)))
+    return total
+
+
+def triangulate(pts):
+    """Простий багатокутник (2D, обхід проти стрілки) → трійки індексів."""
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    left, out = list(range(len(pts))), []
+    while len(left) > 3:
+        best = None
+        # «Вухо» може зачепити лише увігнута вершина — в опуклій деталі їх немає.
+        reflex = [j for i, j, m in zip(left[-1:] + left, left, left[1:] + left[:1])
+                  if cross(pts[i], pts[j], pts[m]) <= 1e-9]
+        for k in range(len(left)):
+            i, j, m = left[k - 1], left[k], left[(k + 1) % len(left)]
+            A, B, C = pts[i], pts[j], pts[m]
+            size = cross(A, B, C)
+            if size <= 1e-9:
+                continue
+            if any(cross(A, B, pts[q]) >= 0 and cross(B, C, pts[q]) >= 0
+                   and cross(C, A, pts[q]) >= 0 for q in reflex if q not in (i, j, m)):
+                continue
+            # З можливих «вух» — найменш гостре: без довгих тонких трикутників.
+            longest = max(math.dist(A, B), math.dist(B, C), math.dist(C, A))
+            if best is None or size / longest ** 2 > best[0]:
+                best = size / longest ** 2, k, (i, j, m)
+        if best is None:                        # вироджений залишок
+            best = 0.0, 1, (left[0], left[1], left[2])
+        out.append(best[2])
+        del left[best[1]]
+    return out + [tuple(left)]
+
+
+def polyface(q):
+    """``(вершини, грані)`` polyface: невидимі діагоналі — з мінусом."""
+    if len(q) == 4:
+        # 1–2 — діагональ (порядок ABF).
+        return (q[0], q[2], q[3], q[1]), ((-1, 2, 3), (-2, 1, 4))
+    n = len(q)
+    flat = [(p[0], p[1]) for p in q]
+    down = _normal(q)[2] < 0
+    tris = triangulate([(x, -y) for x, y in flat] if down else flat)
+    return q, [tuple(i + 1 if j == (i + 1) % n else -(i + 1)
+                     for i, j in zip(t, t[1:] + t[:1])) for t in tris]
+
+
 def _unit(a):
     n = math.sqrt(sum(x * x for x in a))
     return tuple(x / n for x in a)
@@ -422,8 +605,7 @@ class _Template:
 def material_mapper(q):
     """Xdata ``ACAD_MATERIAL_MAPPER`` грані: осі як у SketchUp — для бічних
     граней X = Z×n, Y = Z. Останній вектор — нормаль із додатним знаком."""
-    n = _unit(_cross(tuple(b - a for a, b in zip(q[0], q[1])),
-                     tuple(b - a for a, b in zip(q[0], q[2]))))
+    n = _unit(_normal(q))
     if abs(n[2]) > 0.5:
         ax, ay = (math.copysign(1.0, n[2]), 0.0, 0.0), (0.0, 1.0, 0.0)
     else:
@@ -646,13 +828,14 @@ class _Writer:
             h = self._common("POLYLINE", owner, layer, color, mat, top)
             self.tags((100, "AcDbPolyFaceMesh"), (66, 1))
             self.point((0, 0, 0))
-            self.tags((70, 64), (71, 4), (72, 2), *material_mapper(q))
-            for p in (q[0], q[2], q[3], q[1]):     # 1–2 — діагональ (невидима)
+            verts, tris = polyface(q)
+            self.tags((70, 64), (71, len(verts)), (72, len(tris)), *material_mapper(q))
+            for p in verts:
                 self._common("VERTEX", h, layer, color, None, top)
                 self.tags((100, "AcDbVertex"), (100, "AcDbPolyFaceMeshVertex"))
                 self.point(p)
                 self.tag(70, 192)
-            for f in ((-1, 2, 3), (-2, 1, 4)):
+            for f in tris:
                 self._common("VERTEX", h, layer, color, None, top)
                 self.tag(100, "AcDbFaceRecord")
                 self.point((0, 0, 0))

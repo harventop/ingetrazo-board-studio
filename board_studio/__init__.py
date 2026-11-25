@@ -211,6 +211,9 @@ def _outliner_kind(group):
     props.append(("Edge banding", " / ".join(
         (b or {}).get("name") or (f"{e:g}" if e else "—")
         for b, e in zip(data["bands"], data["edges"]))))
+    extra = [(b.get("band") or {}).get("name") or "—" for b in data["extra_bands"]]
+    if extra:
+        props.append(("Edge banding (curved)", " / ".join(extra)))
     holes = data["holes"]
     if holes:
         props.append(("Holes", str(len(holes))))
