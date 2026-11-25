@@ -43,6 +43,8 @@ def is_fastener(hole):
 def check(f, a, b):
     """Причина, чому кріплення ``f`` не стає в стик «торець a — пласть b»,
     або ``None``."""
+    if not f["holes"]:
+        return "у кріпленні немає жодного отвору"
     ta, tb = a.mm[2], b.mm[2]
     wall = f.get("min_wall", 0.0)
     if ta < f.get("min_edge_thickness", 0.0) - 1e-6:

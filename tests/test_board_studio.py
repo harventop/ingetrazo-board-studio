@@ -555,6 +555,90 @@ def test_edge_band_tool(t):
     check(P.panel_data(g)["edges"][1] == 0.8, "undo brings the band back")
 
 
+def test_drawing(t):
+    """Креслення у налаштуваннях: стежить за полями, клік веде в поле, а
+    розміри ті самі, що й у справжній розстановці."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QFocusEvent
+    from core.history import History
+    from core.scene import Scene
+    L = importlib.import_module("ingetrazo_plugin_board_studio.library")
+    S = importlib.import_module("ingetrazo_plugin_board_studio.settings")
+    F = importlib.import_module("ingetrazo_plugin_board_studio.fasteners")
+    P = importlib.import_module("ingetrazo_plugin_board_studio.panels")
+    L.save(None)
+    dlg = S.SettingsDialog(None)
+    ed, draw = dlg.fasteners, dlg.fasteners.drawing
+    for i, f in enumerate(L.fasteners()):
+        ed.list.setCurrentRow(i)
+        check([(h["where"], h["d"], h["depth"], h["along"]) for h in draw.holes]
+              == [(h["where"], h["d"], h["depth"], h["along"]) for h in f["holes"]],
+              f"drawing shows the holes of {f['name']}")
+        draw.grab(), ed.placement.grab()
+        check({(r, k) for _q, r, k in draw.hits} >= {(r, k) for r in range(len(f["holes"]))
+                                                     for k in ("d", "depth")},
+              f"every diameter and depth of {f['name']} is drawn")
+
+    # Мініфікс: геометрія видів проти справжніх отворів на стику.
+    scene = Scene()
+    vp = FakeViewport(scene, History(scene))
+    b_g = make_panel(t, vp, V(0, 0, 0), V(0.6, 0, 0), V(0.6, 0.4, 0))
+    a_g = make_panel(t, vp, V(0.016, 0, 0.016), V(0.016, 0.4, 0.016), V(0.016, 0.4, 0.736))
+    scene.selection.update([b_g, a_g])
+    mini = L.fasteners()[2]
+    cands, _ = F.candidates(P.selected_panels(scene), mini)
+    c = cands[0]
+    for h, (panel, real) in zip(draw.holes, c.holes):
+        x, y = real["x"] / 1000, real["y"] / 1000
+        world = panel.origin + panel.R[:, 0] * x + panel.R[:, 1] * y
+        if real["type"] == "face" and panel is c.b:
+            world = world + panel.R[:, 2] * (panel.size[2] if real["top"] else 0.0)
+        rel = world - c.point
+        x0, x1, v0, v1 = draw.plan_rect(h)
+        check(abs(float(rel @ c.along) * 1000 - (v0 + v1) / 2) < 0.02, f"shift drawn {h}")
+        if h["where"] == "inner_face":
+            check(abs(float(rel @ c.inward) * 1000 - (x0 + x1) / 2) < 0.02, "cup inset drawn")
+            check(abs(draw.section_rect(h)[3] - 8.0) < 1e-9
+                  and abs(draw.section_rect(h)[2] + 5.0) < 1e-9, "cup depth from inner face")
+
+    # Клік по розміру -> поле; фокус у полі -> підсвітка й площина перерізу.
+    ed._picked(3, "along")
+    check(draw.active == (3, "along") and draw.plane() == 32.0 and ed.table.currentRow() == 3,
+          f"picked dimension is active {draw.active}")
+    ed.eventFilter(ed.table.cellWidget(1, 2), QFocusEvent(QEvent.FocusIn))
+    check(draw.active == (1, "depth"), "focused field is highlighted")
+    ed.eventFilter(ed.spins["offset"], QFocusEvent(QEvent.FocusIn))
+    check(draw.active[0] == -1 and ed.placement.active == (-1, "offset"),
+          "focused offset is highlighted on the placement")
+    hit = next(q for q, r, k in draw.hits if (r, k) == (1, "depth"))
+    check(draw.hit(hit.center()) == (1, "depth"), "click on the depth label")
+
+    # Живе оновлення й розстановка.
+    ed.table.cellWidget(1, 2).setValue(0.0)
+    check(draw.holes[1]["depth"] is None and ed.table.cellWidget(1, 2).text() == "наскрізь",
+          "through hole")
+    check(draw.section_rect(draw.holes[1])[2] == -8.0, "through hole crosses the panel")
+    ed.list.setCurrentRow(1)
+    pts, reason = ed.placement.points()
+    check(reason == "" and pts == F.positions(720.0, 37.0, 256.0, 7.0, 64.0), f"points {pts}")
+    ed.length.setValue(45.0)
+    check(ed.placement.points()[0] == [] and "45 мм < 50 мм" in ed.placement.points()[1],
+          "too short joint explained")
+    ed.placement.grab()
+    ed.thickness["B"].setValue(10.0)
+    check("10 мм < 16 мм" in ed.warning.text(), f"thickness warning {ed.warning.text()}")
+
+    # Без отворів — не падає і пояснює.
+    while ed.table.rowCount():
+        ed.table.setCurrentCell(0, 0)
+        ed._del_row()
+    draw.grab(), ed.placement.grab()
+    empty = dlg.result_data()["fasteners"][1]
+    check(empty["holes"] == [], "all holes deleted")
+    cands, skipped = F.candidates(P.selected_panels(scene), empty)
+    check(cands == [] and "жодного отвору" in skipped[0][1], "empty fastener is skipped")
+
+
 def test_library_and_settings(t):
     """Налаштування: нове кріплення й крайка зберігаються в бібліотеці, панелі
     їх бачать; обмеження не пускають кріплення на тонку деталь."""
@@ -627,6 +711,7 @@ def main():
     test_panels(t)
     test_properties_dialog(t)
     test_edge_band_tool(t)
+    test_drawing(t)
     test_library_and_settings(t)
     test_setup(plug, t)
     test_dialog(t)
