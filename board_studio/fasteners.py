@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 
 from . import outline
+from .i18n import tr
 from .joints import joints, side_frame
 
 TOL = 0.01      # мм: координати моделі — float32, товщина 16 може бути 15.9999
@@ -47,23 +48,25 @@ def check(f, a, b):
     """Причина, чому кріплення ``f`` не стає в стик «торець a — пласть b»,
     або ``None``."""
     if not f["holes"]:
-        return "у кріпленні немає жодного отвору"
+        return tr("the fastener has no holes")
     ta, tb = a.mm[2], b.mm[2]
     wall = f.get("min_wall", 0.0)
     if ta < f.get("min_edge_thickness", 0.0) - TOL:
-        return f"«{a.name}»: товщина {ta:g} мм < {f['min_edge_thickness']:g} мм"
+        return tr("“{name}”: thickness {t:g} mm < {least:g} mm", name=a.name, t=ta,
+                  least=f["min_edge_thickness"])
     if tb < f.get("min_face_thickness", 0.0) - TOL:
-        return f"«{b.name}»: товщина {tb:g} мм < {f['min_face_thickness']:g} мм"
+        return tr("“{name}”: thickness {t:g} mm < {least:g} mm", name=b.name, t=tb,
+                  least=f["min_face_thickness"])
     for h in f["holes"]:
         if h["where"] == "edge" and (ta - h["d"]) / 2 < wall - TOL:
-            return (f"«{a.name}»: стінка біля отвору Ø{h['d']:g} у торці "
-                    f"{(ta - h['d']) / 2:g} мм < {wall:g} мм")
+            return tr("“{name}”: the wall beside the Ø{d:g} hole in the edge is {t:g} mm < {least:g} mm",
+                      name=a.name, d=h["d"], t=(ta - h["d"]) / 2, least=wall)
         if h["where"] in ("joint_face", "outer_face", "inner_face") and h["depth"] is not None:
             t = ta if h["where"] == "inner_face" else tb
             if t - h["depth"] < wall - TOL:
                 who = a.name if h["where"] == "inner_face" else b.name
-                return (f"«{who}»: під отвором Ø{h['d']:g}×{h['depth']:g} лишається "
-                        f"{t - h['depth']:g} мм < {wall:g} мм")
+                return tr("“{name}”: {t:g} mm < {least:g} mm left under the Ø{d:g}×{depth:g} hole",
+                          name=who, d=h["d"], depth=h["depth"], t=t - h["depth"], least=wall)
     return None
 
 
@@ -119,8 +122,8 @@ class Candidate:
 
     @property
     def label(self):
-        where = "край" if self.kind == "end" else "середина"
-        return f"{self.a.name} → {self.b.name}: {self.u:g} мм ({where})"
+        where = tr("end") if self.kind == "end" else tr("middle")
+        return f"{self.a.name} → {self.b.name}: {self.u:g} {tr('mm')} ({where})"
 
 
 def candidates(panels, f, offset=None, step=None):
@@ -141,12 +144,13 @@ def candidates(panels, f, offset=None, step=None):
                 length = (u1 - u0) * 1000
                 reason = check(f, a, b)
                 if reason is None and length < f.get("min_joint", 0.0) - TOL:
-                    reason = f"стик {length:g} мм < {f['min_joint']:g} мм"
+                    reason = tr("joint {length:g} mm < {least:g} mm", length=length,
+                                least=f["min_joint"])
                 points = [] if reason else positions(length, offset, step,
                                                      max(h["d"] for h in f["holes"]),
                                                      f.get("min_step", 0.0))
                 if reason is None and not points:
-                    reason = f"стик {length:g} мм закороткий"
+                    reason = tr("joint {length:g} mm is too short", length=length)
                 if reason:
                     skipped.append((f"{a.name} — {b.name}", reason))
                     continue

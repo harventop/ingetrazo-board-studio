@@ -105,7 +105,7 @@ def test_tool(t):
     tool.on_hover(ctx(vp, V(0.6, 0, 0)))
     check(len(tool.rubber_band_lines()) == 1, "segment preview")
     tool.on_click(ctx(vp, V(0.6, 0, 0)))
-    check(tool.vcb_label == "Height", "VCB label")
+    check(tool.vcb_label == "Висота", "VCB label")
     tool.on_hover(ctx(vp, V(0.2, 0, 0.72)))
     check(len(tool.preview_faces()) == 6, "box preview faces")
     check(all(f.attrs and f.attrs.get("texture") for f in tool.preview_faces()), "textured preview")
@@ -175,7 +175,7 @@ def test_tool(t):
 def check_paint(scene, g, along_length, edge):
     """Пласті — дуб з волокнами вздовж довжини, торці — текстура серцевини."""
     m = importlib.import_module("ingetrazo_plugin_board_studio.materials")
-    oak, edge_name = m.SURFACES["oak"][0], m.SURFACES[edge][0]
+    oak, edge_name = m.surface_name("oak"), m.surface_name(edge)
     check(oak in scene.materials and edge_name in scene.materials, "materials registered")
     check(all(Path(mat.texture["path"]).is_file() for mat in scene.materials.values()),
           "texture files exist")
@@ -221,8 +221,9 @@ def test_setup(plug, t):
     plug.setup(ExtensionApp(win, plug.stem))
     sub = [a.menu() for a in win._ext_menu.actions() if a.menu() and a.text() == "Board Studio"]
     texts = [a.text() for a in sub[0].actions() if not a.isSeparator()] if sub else []
-    check(texts == ["New 3-Point Panel", "Next 3-Point Panel", "Panel Properties…", "Кріплення",
-                    "Крайка", "Export DXF for ViyarPro…", "Show Holes", "Налаштування…"],
+    check(texts == ["Нова панель за 3 точками", "Наступна панель за 3 точками",
+                    "Властивості панелі…", "Кріплення", "Крайка", "Експорт DXF для ViyarPro…",
+                    "Показувати отвори", "Налаштування…"],
           f"menu entries {texts}")
     edge = [a for a in sub[0].actions() if a.text() == "Крайка"]
     edge[0].trigger()                               # панель крайок + режим крайки
@@ -248,7 +249,7 @@ def test_setup(plug, t):
     bar.actions()[1].trigger()                      # Next: без діалогу
     tool = win.viewport.active_tool
     check(isinstance(tool, t.ThreePointPanelTool), "tool active")
-    check("Click first corner" in win.status_hint, f"hint: {win.status_hint}")
+    check("Клацніть перший кут" in win.status_hint, f"hint: {win.status_hint}")
     del app
 
 
@@ -311,7 +312,7 @@ def test_panels(t):
     d = P.panel_data(bottom)
     check(d["edges"] == [0.8, 0, 0, 0] and d["grain"] == "width" and d["article"] == "151932",
           f"stored {d}")
-    oak = m.SURFACES["oak"][0]
+    oak = m.surface_name("oak")
     pb = P.Panel(bottom)
     for f in bottom.mesh.faces:
         key = pb.classify(f)
@@ -321,7 +322,7 @@ def test_panels(t):
         elif key == 0:
             check(f.attrs["mat"] == oak, "banded edge wears the decor")
         else:
-            check(f.attrs["mat"] == m.SURFACES["chipboard"][0], f"plain edge {key} shows the core")
+            check(f.attrs["mat"] == m.surface_name("chipboard"), f"plain edge {key} shows the core")
     hist.undo()
     check(P.panel_data(bottom)["edges"] == [0.0] * 4, "undo properties")
     check(all(f.attrs["mat"] != oak or pb.classify(f) in ("top", "bottom")
@@ -330,7 +331,7 @@ def test_panels(t):
     data = P.panel_data(bottom)
     data["grain"] = "none"
     P.update_panels(vp, [(P.Panel(bottom), data)])
-    check(all(f.attrs["mat"] == m.PLAIN[0] for f in bottom.mesh.faces
+    check(all(f.attrs["mat"] == m.plain_name() for f in bottom.mesh.faces
               if pb.classify(f) in ("top", "bottom", 0)), "no texture → plain decor")
 
     # Стик: торець бокової (сторона 0, y=0 у її осях) лежить на верху дна.
@@ -1033,6 +1034,104 @@ def test_library_and_settings(t):
     check(panel.list.count() == 3, "defaults restored")
 
 
+def test_i18n(t):
+    """Локалізація: переклад повний, fallback — англійська, ключі документів і
+    DXF від мови не залежать. Наприкінці повертає українську."""
+    import ast
+    import json
+    from string import Formatter
+    from core.i18n import set_language
+    i18n = sys.modules["ingetrazo_plugin_board_studio.i18n"]
+    L = sys.modules["ingetrazo_plugin_board_studio.library"]
+    M = sys.modules["ingetrazo_plugin_board_studio.materials"]
+    init = sys.modules["ingetrazo_plugin_board_studio"]
+    S = sys.modules["ingetrazo_plugin_board_studio.settings"]
+
+    # Ключі з коду ↔ словники; кирилиця в коді — лише ключі плит.
+    keys, plates = set(), {p[0] for p in M.PRESETS} | set(M._KINDS)
+    for file in sorted((PROJECT / "board_studio").glob("*.py")):
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+        docs = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Expr)}
+        for n in ast.walk(tree):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id in ("tr", "N_") and isinstance(n.args[0], ast.Constant)):
+                keys.add(n.args[0].value)
+            if (isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs
+                    and any("\u0400" <= c <= "\u04ff" for c in n.value)):
+                check(n.value in plates, f"{file.name}:{n.lineno}: untranslated {n.value!r}")
+    fields = lambda text: sorted((f, spec) for _t, f, spec, _c in Formatter().parse(text) if f)
+    check(i18n.languages() == ["uk"], f"languages {i18n.languages()}")
+    for lang in i18n.languages():
+        pairs = json.loads((i18n.LOCALES / f"{lang}.json").read_text(encoding="utf-8"),
+                           object_pairs_hook=list)
+        cat = dict(pairs)
+        check(len(cat) == len(pairs), f"{lang}: duplicate keys")
+        check(not keys - set(cat), f"{lang}: missing {sorted(keys - set(cat))}")
+        check(not set(cat) - keys, f"{lang}: unused {sorted(set(cat) - keys)}")
+        check(all(v.strip() and fields(k) == fields(v) for k, v in pairs),
+              f"{lang}: empty or other fields {[k for k, v in pairs if fields(k) != fields(v)]}")
+
+    def texts(dlg):
+        from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton
+        out = [dlg.windowTitle()] + [w.text() for c in (QLabel, QPushButton)
+                                     for w in dlg.findChildren(c)]
+        out += [w.title() for w in dlg.findChildren(QGroupBox)]
+        out += [dlg.tabs.tabText(i) for i in range(dlg.tabs.count())]
+        table = dlg.fasteners.table
+        return out + [table.horizontalHeaderItem(c).text() for c in range(table.columnCount())]
+
+    saved = L.load()
+    try:
+        for lang, word in (("en", "Settings…"), ("uk", "Налаштування…"), ("uk-UA", "Налаштування…"),
+                           ("de", "Settings…"), ("ru", "Settings…"), ("pt-BR", "Settings…")):
+            set_language(lang)
+            check(i18n.tr("Settings…") == word, f"{lang}: {i18n.tr('Settings…')}")
+        # Бібліотека, збережена українською, англійською показує типові назви.
+        set_language("uk")
+        L.save(None)
+        data = L.load()
+        check(data["fasteners"][0]["name"] == "Шкант 8×30", "default name in Ukrainian")
+        data["fasteners"][1]["name"] = "Мій конфірмат"
+        L.save(data)
+        set_language("de")                              # немає словника → англійська
+        data = L.load()
+        check([f["name"] for f in data["fasteners"]]
+              == ["Dowel 8×30", "Мій конфірмат", "Minifix + dowel"]
+              and data["edges"][0]["name"] == "PVC 0.4", f"library names {data}")
+        check(L.DEFAULT_FASTENERS[0]["name"] == "Dowel 8×30", "defaults are not changed")
+        check(M.label("ДСП 16") == "Chipboard 16" and M.label("Фанера 12") == "Фанера 12",
+              "board labels")
+        L.save(None)
+        dlg = S.SettingsDialog(None)
+        bad = [x for x in texts(dlg) if any("\u0400" <= c <= "\u04ff" for c in x)]
+        check(not bad and "Board Studio Settings" in texts(dlg), f"not English: {bad}")
+        tool = t.ThreePointPanelTool()
+        check(tool.name == "3-Point Panel" and tool.material == "ДСП 16"
+              and tool.vcb_label == "Length", f"tool {tool.name} {tool.material}")
+        info = init._outliner_kind(_i18n_panel(t))
+        check(info["type"] == "Panel" and ("Material", "Chipboard 16") in info["props"],
+              f"browser {info}")
+        # Панель, намальована англійською, зберігає ті самі ключі.
+        data = _i18n_panel(t).ext["board_studio"]
+        check(data["material"] == "ДСП 16" and data["grain"] == "length", f"stored {data}")
+        set_language("uk")
+        check(M.label("ДСП 16") == "ДСП 16" and tool.name == "Панель за 3 точками", "Ukrainian")
+        # Зіпсований переклад не валить плагін.
+        i18n.catalog("uk")["Added: {n}"] = "Додано: {кількість}"
+        check(i18n.tr("Added: {n}", n=2) == "Added: 2", "broken translation → English")
+    finally:
+        i18n.catalog.cache_clear()
+        set_language("uk")
+        L.save(saved)
+
+
+def _i18n_panel(t):
+    from core.history import History
+    from core.scene import Scene
+    scene = Scene()
+    return make_panel(t, FakeViewport(scene, History(scene)), V(0, 0, 0), V(1, 0, 0), V(1, 0, 0.5))
+
+
 def main():
     QCoreApplication.setOrganizationName("board-studio-tests")
     QCoreApplication.setApplicationName("board-studio-tests")
@@ -1040,6 +1139,8 @@ def main():
     from PySide6.QtWidgets import QMessageBox
     QMessageBox.information = staticmethod(lambda _p, _t, text: FAILS.append(f"message: {text}")
                                            or print("FAIL: message:", text))
+    from core.i18n import set_language
+    set_language("uk")                      # решта тестів читає українські підписи
     plug, t = load_plugin()
     test_geometry(t)
     test_tool(t)
@@ -1053,6 +1154,7 @@ def main():
     test_library_and_settings(t)
     test_setup(plug, t)
     test_dialog(t)
+    test_i18n(t)
     if FAILS:
         sys.exit(f"\n{len(FAILS)} failure(s)")
     print("OK")

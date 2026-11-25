@@ -29,11 +29,13 @@ import re
 
 from PySide6.QtCore import QSettings
 
+from .i18n import N_, tr, variants
+
 KEY = "board_studio/library"
-WHERE = (("edge", "Торець деталі"),
-         ("joint_face", "Пласть сусідньої (стик)"),
-         ("outer_face", "Пласть сусідньої (зовні)"),
-         ("inner_face", "Пласть деталі (всередині)"))
+WHERE = (("edge", N_("Panel edge")),
+         ("joint_face", N_("Other panel's face (joint)")),
+         ("outer_face", N_("Other panel's face (outer)")),
+         ("inner_face", N_("Panel's own face (inner)")))
 #: Типова група ABF для присадки (атрибут ``Skp_GroupInstanceName``).
 DEFAULT_GROUP = {"edge": "_ABF_sideDrill", "joint_face": "_ABF_dowel",
                  "outer_face": "_ABF_screwInside", "inner_face": "_ABF_minifixBolts"}
@@ -44,18 +46,19 @@ def hole(where, d, depth, along=0.0, from_edge=0.0, article="", group="", layer=
             "article": article, "group": group, "layer": layer}
 
 
+#: Назви типових записів — англійською; показувані — :func:`default_fasteners`.
 DEFAULT_FASTENERS = [
-    {"key": "dowel_8x30", "name": "Шкант 8×30",
+    {"key": "dowel_8x30", "name": N_("Dowel 8×30"),
      "offset": 32.0, "step": 256.0, "min_step": 64.0, "min_joint": 40.0,
      "min_edge_thickness": 16.0, "min_face_thickness": 16.0, "min_wall": 4.0,
      "holes": [hole("edge", 8.0, 25.0),
                hole("joint_face", 8.0, 12.0, article="38878", group="_ABF_dowel")]},
-    {"key": "confirmat_7x50", "name": "Конфірмат 7×50",
+    {"key": "confirmat_7x50", "name": N_("Confirmat 7×50"),
      "offset": 37.0, "step": 256.0, "min_step": 64.0, "min_joint": 50.0,
      "min_edge_thickness": 16.0, "min_face_thickness": 16.0, "min_wall": 3.0,
      "holes": [hole("edge", 4.5, 34.0),
                hole("outer_face", 7.0, None, article="44817", group="_ABF_screwInside")]},
-    {"key": "minifix_15", "name": "Мініфікс + шкант",
+    {"key": "minifix_15", "name": N_("Minifix + dowel"),
      "offset": 37.0, "step": 512.0, "min_step": 128.0, "min_joint": 100.0,
      "min_edge_thickness": 16.0, "min_face_thickness": 16.0, "min_wall": 3.0,
      "holes": [hole("edge", 8.0, 33.0),
@@ -69,24 +72,44 @@ DEFAULT_FASTENERS = [
 ]
 
 DEFAULT_EDGES = [
-    {"key": "pvc_04", "name": "ПВХ 0.4", "thickness": 0.4, "color": "#4fa3e0", "article": ""},
-    {"key": "pvc_08", "name": "ПВХ 0.8", "thickness": 0.8, "color": "#3cb371", "article": ""},
-    {"key": "pvc_10", "name": "ПВХ 1.0", "thickness": 1.0, "color": "#e0a030", "article": ""},
-    {"key": "pvc_20", "name": "ПВХ 2.0", "thickness": 2.0, "color": "#d9534f", "article": ""},
+    {"key": "pvc_04", "name": N_("PVC 0.4"), "thickness": 0.4, "color": "#4fa3e0", "article": ""},
+    {"key": "pvc_08", "name": N_("PVC 0.8"), "thickness": 0.8, "color": "#3cb371", "article": ""},
+    {"key": "pvc_10", "name": N_("PVC 1.0"), "thickness": 1.0, "color": "#e0a030", "article": ""},
+    {"key": "pvc_20", "name": N_("PVC 2.0"), "thickness": 2.0, "color": "#d9534f", "article": ""},
 ]
 
 FASTENER_FIELDS = (
     # (ключ, підпис, мін, макс) — числові поля кріплення, мм
-    ("offset", "Відступ від кінців стику", 0.0, 1000.0),
-    ("step", "Найбільший крок", 1.0, 5000.0),
-    ("min_step", "Найменший крок (зазор між кріпленнями)", 0.0, 5000.0),
-    ("min_joint", "Найменша довжина стику", 0.0, 5000.0),
-    ("min_edge_thickness", "Найменша товщина деталі з торцем", 0.0, 100.0),
-    ("min_face_thickness", "Найменша товщина сусідньої деталі", 0.0, 100.0),
-    ("min_wall", "Найменша товщина стінки біля отвору", 0.0, 50.0),
+    ("offset", N_("Offset from the joint ends"), 0.0, 1000.0),
+    ("step", N_("Largest step"), 1.0, 5000.0),
+    ("min_step", N_("Smallest step (gap between fasteners)"), 0.0, 5000.0),
+    ("min_joint", N_("Shortest joint"), 0.0, 5000.0),
+    ("min_edge_thickness", N_("Least thickness of the panel with the edge"), 0.0, 100.0),
+    ("min_face_thickness", N_("Least thickness of the other panel"), 0.0, 100.0),
+    ("min_wall", N_("Least wall beside a hole"), 0.0, 50.0),
 )
 
 _listeners = []
+
+
+def _localized(items, defaults):
+    """Типові назви — мовою інтерфейсу, хоч би якою їх було збережено; назви,
+    які дав користувач, не чіпаємо."""
+    names = {d["key"]: d["name"] for d in defaults}
+    for item in items:
+        name = names.get(item.get("key"))
+        if name is not None and item.get("name") in variants(name):
+            item["name"] = tr(name)
+    return items
+
+
+def default_fasteners():
+    """Копія типових кріплень із назвами мовою інтерфейсу."""
+    return _localized(copy.deepcopy(DEFAULT_FASTENERS), DEFAULT_FASTENERS)
+
+
+def default_edges():
+    return _localized(copy.deepcopy(DEFAULT_EDGES), DEFAULT_EDGES)
 
 
 def load():
@@ -100,8 +123,10 @@ def load():
             data = None
     if not isinstance(data, dict):
         data = {}
-    out = {"fasteners": data.get("fasteners") or copy.deepcopy(DEFAULT_FASTENERS),
-           "edges": data.get("edges") or copy.deepcopy(DEFAULT_EDGES)}
+    out = {"fasteners": _localized(data.get("fasteners") or copy.deepcopy(DEFAULT_FASTENERS),
+                                    DEFAULT_FASTENERS),
+           "edges": _localized(data.get("edges") or copy.deepcopy(DEFAULT_EDGES),
+                                DEFAULT_EDGES)}
     for f in out["fasteners"]:
         for key, _label, _lo, _hi in FASTENER_FIELDS:
             f.setdefault(key, 0.0)

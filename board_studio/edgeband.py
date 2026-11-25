@@ -19,6 +19,7 @@ from PySide6.QtGui import QVector3D as V
 from core.geometry import Face
 from tools.base import Tool, loop_normal
 
+from .i18n import tr
 from .panels import Panel, iter_panels, panel_data, update_panels
 
 LIFT = 0.3          # мм: підсвітка трохи над торцем, щоб не мерехтіла з ним
@@ -69,9 +70,7 @@ def edge_quads(panel, key, lift=LIFT):
 
 
 class EdgeBandTool(Tool):
-    name = "Edge Banding"
     icon = "paint"
-    description = "Click an edge of a panel to add the chosen edge band; click again to remove it."
     uses_snap = False
 
     def __init__(self):
@@ -79,6 +78,16 @@ class EdgeBandTool(Tool):
         self.hover = None           # (Panel, side)
         self._faces = None          # кеш: id(face) → (group, matrix)
         self._faces_key = None
+
+    # Мову IngeTrazo встановлює до показу — тому властивості, а не константи класу.
+    @property
+    def name(self):
+        return tr("Edge Banding")
+
+    @property
+    def description(self):
+        return tr("Click an edge of a panel to add the chosen edge band; "
+                  "click again to remove it.")
 
     # ---- Життєвий цикл ----
     def on_activate(self, viewport):
@@ -130,22 +139,22 @@ class EdgeBandTool(Tool):
         vp = ctx.viewport
         hit = self.pick(vp, ctx.screen.x(), ctx.screen.y())
         if hit is None:
-            vp.flash_status("Click an edge of a Board Studio panel", 3000)
+            vp.flash_status(tr("Click an edge of a Board Studio panel"), 3000)
             return
         if self.band is None:
-            vp.flash_status("Choose an edge band in the Крайка panel", 4000)
+            vp.flash_status(tr("Choose an edge band in the Edge Banding panel"), 4000)
             return
         panel, side = hit
         data = copy.deepcopy(panel.data)
         current = panel.bands(data).get(side, (None, 0.0))[0]
         if current is not None and current.get("key") == self.band.get("key"):
             panel.set_band(data, side, None, 0.0)
-            text = f"{self.band['name']} removed"
+            text = tr("{band} removed", band=self.band["name"])
         else:
             panel.set_band(data, side, band_snapshot(self.band), self.band["thickness"])
-            text = f"{self.band['name']} added"
+            text = tr("{band} added", band=self.band["name"])
         err = update_panels(vp, [(panel, data)])
-        vp.flash_status(f"Edge band not changed: {err}" if err else
+        vp.flash_status(tr("Edge band not changed: {err}", err=err) if err else
                         f"{panel.name}: {text}", 3000)
         self.hover = None
         vp.update()
@@ -194,8 +203,8 @@ class EdgeBandTool(Tool):
 
     def _prompt(self, viewport):
         name = self.band["name"] if self.band else "—"
-        viewport.flash_status(f"Edge band {name}: click an edge to add, click again to remove",
-                              10000)
+        viewport.flash_status(tr("Edge band {name}: click an edge to add, click again to remove",
+                                 name=name), 10000)
         refresh = getattr(self, "refresh_hint", None)
         if callable(refresh):
             refresh(viewport)

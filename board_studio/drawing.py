@@ -18,6 +18,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPainter, QPen, 
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from . import fasteners
+from .i18n import tr
 
 # Папір світлий незалежно від теми програми — це креслення.
 PAPER, INK, MUTED = QColor("#ffffff"), QColor("#1c2430"), QColor("#7a8594")
@@ -252,7 +253,8 @@ class JointDrawing(_Drawing):
 
         # -- переріз --
         plane = self.plane()
-        self._title(p, 12, "Переріз стику" + (f" (зсув {num(plane)} мм)" if plane else ""))
+        self._title(p, 12, tr("Joint section (shift {shift} mm)", shift=num(plane)) if plane
+                    else tr("Joint section"))
         rect_b = QRectF(ox - self.tb * s, b_top, self.tb * s, b_bottom - b_top)
         rect_a = QRectF(ox, yc - half, right - ox, 2 * half)
         self._panel(p, rect_b, B_FILL, B_INK, "lr", Qt.BDiagPattern)
@@ -293,7 +295,7 @@ class JointDrawing(_Drawing):
                   num(self.tb), ext=b_bottom, side=1)
 
         # -- вид на пласть A --
-        self._title(p, plan_title, "Вид на пласть A (зсередини)")
+        self._title(p, plan_title, tr("Face of A (from inside)"))
         self._panel(p, QRectF(plan.left(), plan.top(), self.tb * s, plan.height()),
                     B_FILL, B_INK, "lr")
         self._panel(p, QRectF(ox, plan.top(), right - ox, plan.height()), A_FILL, A_INK, "l")
@@ -325,7 +327,7 @@ class JointDrawing(_Drawing):
         p.save()
         p.translate(x + 12, plan.center().y())
         p.rotate(90)
-        self._text(p, 0, 0, "до середини", MUTED, align="c")
+        self._text(p, 0, 0, tr("to the middle"), MUTED, align="c")
         p.restore()
 
     def _row_of(self, key, value):
@@ -389,7 +391,7 @@ class JointDrawing(_Drawing):
         color = self._color(i)
         r = self._text(p, x, y, f"#{i + 1} ", MUTED, hit=None)
         r = self._text(p, r.right(), y, f"⌀{num(h['d'])}", color, True, hit=(i, "d"))
-        depth = "наскр." if h["depth"] is None else f"× {num(h['depth'])}"
+        depth = tr("thru") if h["depth"] is None else f"× {num(h['depth'])}"
         r = self._text(p, r.right() + 4, y, depth, color, True, hit=(i, "depth"))
         p.save()
         p.setPen(QPen(color, 1))
@@ -403,7 +405,7 @@ class JointDrawing(_Drawing):
     def _active_dims(self, p, i, r, rect_a, rect_b):
         """Діаметр і глибина активного отвору — розмірними лініями."""
         h = self.holes[i]
-        depth = num(h["depth"]) if h["depth"] is not None else "наскр."
+        depth = num(h["depth"]) if h["depth"] is not None else tr("thru")
         d = f"⌀{num(h['d'])}"
         if h["where"] == "inner_face":
             x = r.right() + 12
@@ -443,14 +445,15 @@ class PlacementDrawing(_Drawing):
         """``(точки, причина)`` — як у :func:`.fasteners.candidates`."""
         f = self.f
         if not f or not f["holes"]:
-            return [], "Немає жодного отвору"
+            return [], tr("No holes")
         if self.length < f.get("min_joint", 0.0) - 1e-6:
-            return [], f"Стик {num(self.length)} мм < {num(f['min_joint'])} мм"
+            return [], tr("Joint {length} mm < {least} mm", length=num(self.length),
+                          least=num(f["min_joint"]))
         pts = fasteners.positions(self.length, f["offset"], f["step"],
                                   max(h["d"] for h in f["holes"]), f.get("min_step", 0.0))
         # Кріплення, чий отвір вийшов би за кінець стику, не ставиться.
         pts = [u for u in pts if all(0.0 <= v <= self.length for v in self.offsets(u))]
-        return pts, "" if pts else f"Стик {num(self.length)} мм закороткий"
+        return pts, "" if pts else tr("Joint {length} mm is too short", length=num(self.length))
 
     def offsets(self, u):
         """Де вздовж стику стають отвори кріплення з точкою ``u``."""
