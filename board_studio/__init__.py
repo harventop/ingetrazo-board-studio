@@ -5,10 +5,12 @@ SketchUp-розширення). Extensions ▸ Board Studio і тулбар «Pa
 - **New 3-Point Panel** — діалог параметрів, потім малювання;
 - **Next 3-Point Panel** — одразу малювання з попередніми параметрами;
 - **Panel Properties** — напрямок текстури, декор Viyar;
-- **Кріплення** — бічна панель: кріплення з бібліотеки в стики «торець на пласть»;
-- **Крайка** — бічна панель і режим: клік по торцю додає/прибирає крайку;
-- **Налаштування** — бібліотека кріплень (присадки, зазори, обмеження) і крайок;
+- **Fasteners** — бічна панель: кріплення з бібліотеки в стики «торець на пласть»;
+- **Edge Banding** — бічна панель і режим: клік по торцю додає/прибирає крайку;
+- **Settings** — бібліотека кріплень (присадки, зазори, обмеження) і крайок;
 - **Export DXF for ViyarPro** — розкрій у форматі ABF_Flatten.
+
+Назви пунктів — англійські ключі; мову інтерфейсу дає :mod:`.i18n`.
 """
 from __future__ import annotations
 
@@ -26,16 +28,17 @@ from . import ui
 from .edgeband import EdgeBandTool
 from .fastenmode import FastenerTool
 from .holemarks import HoleOverlay
+from .i18n import N_, tr
 from .settings import edit_settings
-from .materials import DEFAULT, PRESETS, preset_thickness
+from .materials import DEFAULT, PRESETS, label, preset_thickness
 from .panels import panel_data
 from .tool import ThreePointPanelTool
 
 ICONS = Path(__file__).parent / "icons"
 #: (атрибут інструмента, підпис, типове значення в мм, мінімум)
-FIELDS = (("thickness", "Thickness (mm)", 16.0, 0.01),
-          ("offset_length", "Offset along Length (mm)", 0.0, 0.0),
-          ("offset_width", "Offset along Width/Height (mm)", 0.0, 0.0))
+FIELDS = (("thickness", N_("Thickness (mm)"), 16.0, 0.01),
+          ("offset_length", N_("Offset along Length (mm)"), 0.0, 0.0),
+          ("offset_width", N_("Offset along Width/Height (mm)"), 0.0, 0.0))
 
 
 def setup(app):
@@ -43,9 +46,9 @@ def setup(app):
     _load(tool)
     key = f"plugin_{app.key}_ThreePointPanelTool"
     HINTS.setdefault(key, {
-        "idle": "Click first corner.",
-        "started": "Click the next point, or type a length and press Enter. "
-                   "Ctrl = flip push direction.",
+        "idle": tr("Click first corner."),
+        "started": tr("Click the next point, or type a length and press Enter. "
+                      "Ctrl = flip push direction."),
     })
 
     def activate(t, k):
@@ -64,13 +67,13 @@ def setup(app):
 
     band_tool = EdgeBandTool()
     band_key = f"plugin_{app.key}_EdgeBandTool"
-    HINTS.setdefault(band_key, {"idle": "Click an edge of a panel to add the edge band; "
-                                        "click again to remove it."})
+    HINTS.setdefault(band_key, {"idle": tr("Click an edge of a panel to add the edge band; "
+                                           "click again to remove it.")})
 
     fasten_tool = FastenerTool(lambda: getattr(app, "_fasteners_panel", None))
     fasten_key = f"plugin_{app.key}_FastenerTool"
-    HINTS.setdefault(fasten_key, {"idle": "Click a suggested place to mark it; "
-                                          "click a panel to select it."})
+    HINTS.setdefault(fasten_key, {"idle": tr("Click a suggested place to mark it; "
+                                             "click a panel to select it.")})
 
     def fasten_mode():
         """Пункт «Кріплення»: панель з рекомендаціями + режим кріплення."""
@@ -79,17 +82,17 @@ def setup(app):
 
     def edge_mode():
         """Пункт «Крайка»: панель з крайками + режим крайки."""
-        ui.show_panel(app, "_edges_panel", "Крайка", "edges",
+        ui.show_panel(app, "_edges_panel", tr("Edge Banding"), "edges",
                       lambda: ui.EdgeBandPanel(app, band_tool,
                                                lambda: activate(band_tool, band_key)))
         activate(band_tool, band_key)
 
     actions = []
     for text, tip, icon, dialog in (
-            ("New 3-Point Panel", "Create new panel by 3 points with parameters dialog",
+            (tr("New 3-Point Panel"), tr("Create new panel by 3 points with parameters dialog"),
              "new.png", True),
-            ("Next 3-Point Panel", "Create next panel by 3 points using previous settings "
-             "without dialog", "next.png", False)):
+            (tr("Next 3-Point Panel"), tr("Create next panel by 3 points using previous "
+                                          "settings without dialog"), "next.png", False)):
         act = QAction(QIcon(str(ICONS / icon)), text, app.window)
         act.setToolTip(f"{text}\n{tip}")
         act.setStatusTip(tip)
@@ -98,26 +101,27 @@ def setup(app):
 
     commands = []
     for text, tip, icon, fn in (
-            ("Panel Properties…", "Texture direction and Viyar decor of the selected panels",
+            (tr("Panel Properties…"),
+             tr("Texture direction and Viyar decor of the selected panels"),
              "properties.png", ui.edit_properties),
-            ("Кріплення", "Кріплення: рекомендовані місця між виділеними панелями — "
-             "відмітити потрібні й додати", "dowels.png", lambda _app: fasten_mode()),
-            ("Крайка", "Режим крайки: клік по торцю панелі додає обрану крайку, "
-             "ще клік — прибирає", "edgeband.png", lambda _app: edge_mode()),
-            ("Export DXF for ViyarPro…", "Export the selected panels (or all panels) "
-             "to DXF for ViyarPro", "dxf.png", ui.export_dxf)):
+            (tr("Fasteners"), tr("Suggested fastener places between the selected panels: "
+                                 "mark the ones you need and add them"), "dowels.png", lambda _app: fasten_mode()),
+            (tr("Edge Banding"), tr("Edge banding mode: click an edge of a panel to add the "
+                                    "chosen band, click again to remove it"), "edgeband.png", lambda _app: edge_mode()),
+            (tr("Export DXF for ViyarPro…"), tr("Export the selected panels (or all panels) "
+                                                "to DXF for ViyarPro"), "dxf.png", ui.export_dxf)):
         act = QAction(QIcon(str(ICONS / icon)) if icon else QIcon(), text, app.window)
         act.setToolTip(f"{text.rstrip('…')}\n{tip}")
         act.setStatusTip(tip)
         act.triggered.connect(lambda _c=False, f=fn: f(app))
         commands.append(act)
     overlay = HoleOverlay(app)
-    show = QAction("Show Holes", app.window, checkable=True, checked=True)
-    show.setStatusTip("Show dowel and drilling marks on panels")
+    show = QAction(tr("Show Holes"), app.window, checkable=True, checked=True)
+    show.setStatusTip(tr("Show dowel and drilling marks on panels"))
     show.toggled.connect(lambda on: (setattr(overlay, "visible", on), app.viewport.update()))
 
-    settings = QAction("Налаштування…", app.window)
-    settings.setStatusTip("Бібліотека кріплень і крайок Board Studio")
+    settings = QAction(tr("Settings…"), app.window)
+    settings.setStatusTip(tr("Board Studio library of fasteners and edge bands"))
     settings.triggered.connect(lambda _c=False: edit_settings(app))
 
     menu = app.add_menu("Board Studio")
@@ -128,7 +132,7 @@ def setup(app):
         menu.addSeparator()
         menu.addAction(show)
         menu.addAction(settings)
-    bar = QToolBar("Panel Creator", app.window)
+    bar = QToolBar(tr("Panel Creator"), app.window)
     bar.setObjectName("extension_board_studio_toolbar")    # стабільне: макет вікна
     bar.addActions(actions)
     bar.addSeparator()
@@ -166,21 +170,23 @@ def _load(tool):
 def _ask(parent, tool):
     """Діалог параметрів (аналог ``UI.inputbox``); True — прийнято й збережено."""
     dlg = QDialog(parent)
-    dlg.setWindowTitle("Create Panel Parameters")
+    dlg.setWindowTitle(tr("Create Panel Parameters"))
     form = QFormLayout(dlg)
     combo = QComboBox(dlg)
-    combo.addItems([name for name, *_ in PRESETS])
-    combo.setCurrentText(tool.material)
-    form.addRow("Material", combo)
+    for name, *_ in PRESETS:
+        combo.addItem(label(name), name)
+    combo.setCurrentIndex(combo.findData(tool.material))
+    form.addRow(tr("Material"), combo)
     spins = {}
-    for name, label, _default, minimum in FIELDS:
+    for name, text, _default, minimum in FIELDS:
         box = spins[name] = QDoubleSpinBox(dlg)
         box.setRange(minimum, 100000.0)
-        box.setSuffix(" mm")
+        box.setSuffix(f" {tr('mm')}")
         box.setValue(getattr(tool, name) * 1000)
-        form.addRow(label, box)
+        form.addRow(tr(text), box)
     # Плита підставляє свою товщину; її можна виправити вручну.
-    combo.currentTextChanged.connect(lambda name: spins["thickness"].setValue(preset_thickness(name)))
+    combo.currentIndexChanged.connect(
+        lambda _i: spins["thickness"].setValue(preset_thickness(combo.currentData())))
     buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
     buttons.accepted.connect(dlg.accept)
     buttons.rejected.connect(dlg.reject)
@@ -189,7 +195,7 @@ def _ask(parent, tool):
     if dlg.exec() != QDialog.Accepted:
         return False
     qs = QSettings()
-    tool.material = combo.currentText()
+    tool.material = combo.currentData()
     qs.setValue("board_studio/material", tool.material)
     for name, box in spins.items():
         setattr(tool, name, box.value() / 1000)
@@ -202,19 +208,20 @@ def _outliner_kind(group):
     data = panel_data(group)
     if not data:
         return None
-    props = [("Material", data.get("material", "—"))]
-    props += [(k.capitalize(), fmt_len_fine(data[k])) for k in ("length", "width", "thickness")
-              if k in data]
+    props = [(tr("Material"), label(data["material"]) if data.get("material") else "—")]
+    props += [(text, fmt_len_fine(data[k])) for k, text in (
+        ("length", tr("Length")), ("width", tr("Width")), ("thickness", tr("Thickness")))
+        if k in data]
     if data["article"]:
-        props.append(("Decor", f"${data['article']} {data['decor']}".strip()))
-    props.append(("Texture", dict(ui.GRAIN_LABELS).get(data["grain"], data["grain"])))
-    props.append(("Edge banding", " / ".join(
+        props.append((tr("Decor"), f"${data['article']} {data['decor']}".strip()))
+    props.append((tr("Texture"), tr(dict(ui.GRAIN_LABELS).get(data["grain"], data["grain"]))))
+    props.append((tr("Edge banding"), " / ".join(
         (b or {}).get("name") or (f"{e:g}" if e else "—")
         for b, e in zip(data["bands"], data["edges"]))))
     extra = [(b.get("band") or {}).get("name") or "—" for b in data["extra_bands"]]
     if extra:
-        props.append(("Edge banding (curved)", " / ".join(extra)))
+        props.append((tr("Edge banding (curved)"), " / ".join(extra)))
     holes = data["holes"]
     if holes:
-        props.append(("Holes", str(len(holes))))
-    return {"type": "Panel", "props": props}
+        props.append((tr("Holes"), str(len(holes))))
+    return {"type": tr("Panel"), "props": props}

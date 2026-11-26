@@ -25,6 +25,7 @@ from core.snap import POINT_SNAP_KINDS
 from core.units import fmt_len
 from tools.base import AxisMagnet, Tool, loop_normal
 
+from .i18n import N_, tr
 from .materials import DEFAULT, board_paints, ensure_materials
 from .panels import EXT_KEY, creation_axes
 
@@ -87,13 +88,10 @@ def box_edges(base, push):
 # ---- Інструмент ----------------------------------------------------------------
 
 class ThreePointPanelTool(AxisMagnet, Tool):
-    name = "3-Point Panel"
     icon = "rectangle"          # курсор-олівець із прямокутником
-    description = ("Create a panel of the set thickness from three points: "
-                   "corner, length, height.")
-    STEPS = ("Click first corner",
-             "Click second point (length), or type the length",
-             "Click third point (height), or type the height")
+    STEPS = (N_("Click first corner"),
+             N_("Click second point (length), or type the length"),
+             N_("Click third point (height), or type the height"))
 
     def __init__(self, thickness=0.016, offset_length=0.0, offset_width=0.0,
                  material=DEFAULT):
@@ -112,12 +110,21 @@ class ThreePointPanelTool(AxisMagnet, Tool):
 
     # ---- Що читає viewport ----
     @property
+    def name(self):
+        return tr("3-Point Panel")
+
+    @property
+    def description(self):
+        return tr("Create a panel of the set thickness from three points: "
+                  "corner, length, height.")
+
+    @property
     def start_point(self):
         return self.points[0] if self.points else None
 
     @property
     def vcb_label(self):
-        return "Height" if len(self.points) == 2 else "Length"
+        return tr("Height") if len(self.points) == 2 else tr("Length")
 
     def magnet_on(self):
         return len(self.points) == 1        # магніт осей — лише для базової лінії
@@ -187,7 +194,7 @@ class ThreePointPanelTool(AxisMagnet, Tool):
         return True
 
     def status_clause(self):
-        return f"Ctrl = flip push direction {self._side()}"
+        return f"{tr('Ctrl = flip push direction')} {self._side()}"
 
     # ---- Прев'ю ----
     def rubber_band_lines(self):
@@ -282,8 +289,8 @@ class ThreePointPanelTool(AxisMagnet, Tool):
     def _finish(self, viewport, third):
         panel = self._panel(third)
         if panel is None:
-            viewport.flash_status("The height is zero — move away from the base line, "
-                                  "or type the height and press Enter", 4000)
+            viewport.flash_status(tr("The height is zero — move away from the base line, "
+                                     "or type the height and press Enter"), 4000)
             return
         self._create(viewport, panel[0], panel[2])
         self.on_cancel(viewport)
@@ -294,8 +301,8 @@ class ThreePointPanelTool(AxisMagnet, Tool):
         viewport.update()
 
     def _prompt(self, viewport):
-        viewport.flash_status(f"{self.STEPS[len(self.points)]} {self._side()} | "
-                              "Ctrl = flip push direction", 10000)
+        viewport.flash_status(f"{tr(self.STEPS[len(self.points)])} {self._side()} | "
+                              f"{tr('Ctrl = flip push direction')}", 10000)
         self.refresh_hint(viewport)
 
     def _create(self, viewport, corners, push):
@@ -319,7 +326,7 @@ class ThreePointPanelTool(AxisMagnet, Tool):
         history = viewport.history
         history.execute(InsertGroupCommand(group))
         if history.last_error:
-            viewport.flash_status(f"Panel was not created: {history.last_error}", 6000)
+            viewport.flash_status(tr("Panel was not created: {err}", err=history.last_error), 6000)
         notify = getattr(viewport, "notify_scene_changed", None)
         if callable(notify):
             notify()
@@ -332,6 +339,7 @@ def _names(groups):
 
 
 def _next_name(scene):
+    """«Panel N» — однаково всіма мовами: назва йде в DXF, де кирилиця губиться."""
     taken = set(_names(scene.groups))
     k = 1
     while f"Panel {k}" in taken:

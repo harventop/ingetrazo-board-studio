@@ -11,17 +11,21 @@ from pathlib import Path
 
 from core.materials import Material
 
+from .i18n import N_, tr
+
 TEXTURES = Path(__file__).parent / "textures"
 
 #: поверхня → (назва матеріалу в документі, файл, ширина плитки м, висота плитки м).
+#: Назва потрапляє в документ мовою, якою його малювали (:func:`surface_name`).
 #: Ширина зображення (U) — вздовж волокон / довжини.
 SURFACES = {
-    "oak": ("Board Studio — Дуб", "oak.png", 0.8, 0.4),
-    "chipboard": ("Board Studio — ДСП (торець)", "chipboard.png", 0.12, 0.12),
-    "fibreboard": ("Board Studio — МДФ/ДВП (торець)", "fibreboard.png", 0.08, 0.08),
+    "oak": (N_("Board Studio — Oak"), "oak.png", 0.8, 0.4),
+    "chipboard": (N_("Board Studio — Chipboard (edge)"), "chipboard.png", 0.12, 0.12),
+    "fibreboard": (N_("Board Studio — MDF/Hardboard (edge)"), "fibreboard.png", 0.08, 0.08),
 }
 
-#: (назва, товщина мм, текстура торця)
+#: (назва, товщина мм, текстура торця). Назва — ключ: записана в документах і
+#: налаштуваннях, тому не перекладається; підпис для неї дає :func:`label`.
 PRESETS = (
     ("ДСП 10", 10.0, "chipboard"),
     ("ДСП 16", 16.0, "chipboard"),
@@ -41,8 +45,29 @@ PRESETS = (
 )
 DEFAULT = "ДСП 16"
 #: Однотонний декор — для панелей без текстури (напрямок «none»).
-PLAIN = ("Board Studio — Однотонний", (0.93, 0.92, 0.89))
+PLAIN = (N_("Board Studio — Plain"), (0.93, 0.92, 0.89))
 _BY_NAME = {name: (mm, edge) for name, mm, edge in PRESETS}
+
+
+#: Вид плити в ключі → підпис.
+_KINDS = {"ДСП": N_("Chipboard"), "МДФ": N_("MDF"), "ДВП": N_("Hardboard")}
+
+
+def label(name):
+    """Підпис плити мовою інтерфейсу: «ДСП 16» → «Chipboard 16». Назва не з
+    ``PRESETS`` показується як є."""
+    if name not in _BY_NAME:
+        return name
+    kind, _sp, rest = name.partition(" ")
+    return f"{tr(_KINDS[kind])} {rest}" if kind in _KINDS else name
+
+
+def surface_name(surface):
+    return tr(SURFACES[surface][0])
+
+
+def plain_name():
+    return tr(PLAIN[0])
 
 
 def preset_thickness(name):
@@ -64,15 +89,15 @@ def ensure_materials(scene, material, plain=False):
     ``plain`` — ще й однотонний декор."""
     if material is not None:
         for surface in ("oak", edge_surface(material)):
-            name = SURFACES[surface][0]
+            name = surface_name(surface)
             if name not in scene.materials:
                 scene.materials[name] = Material(name, texture=_texture(surface))
-    if plain and PLAIN[0] not in scene.materials:
-        scene.materials[PLAIN[0]] = Material(PLAIN[0], color=PLAIN[1])
+    if plain and plain_name() not in scene.materials:
+        scene.materials[plain_name()] = Material(plain_name(), color=PLAIN[1])
 
 
 def paint_plain():
-    return {"mat": PLAIN[0], "color": list(PLAIN[1])}
+    return {"mat": plain_name(), "color": list(PLAIN[1])}
 
 
 def paint(surface, along, across):
@@ -81,7 +106,7 @@ def paint(surface, along, across):
     tex = _texture(surface)
     tex["uvw"] = [along.x() / tex["sw"], along.y() / tex["sw"], along.z() / tex["sw"], 0.0,
                   across.x() / tex["sh"], across.y() / tex["sh"], across.z() / tex["sh"], 0.0]
-    return {"mat": SURFACES[surface][0], "texture": tex}
+    return {"mat": surface_name(surface), "texture": tex}
 
 
 def board_paints(corners, push, material):

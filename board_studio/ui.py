@@ -19,11 +19,12 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpin
 from . import fasteners, holemarks
 from .dxf import export
 from . import library
-
+from .i18n import N_, tr
 from .panels import all_panels, selected_panels, update_panels
 
-GRAIN_LABELS = (("length", "Along length"), ("width", "Along width"), ("none", "No texture"))
-KEEP = "(keep)"
+GRAIN_LABELS = (("length", N_("Along length")), ("width", N_("Along width")),
+                ("none", N_("No texture")))
+KEEP = N_("(keep)")      # і позначка «панелі розходяться», і підпис (tr)
 
 
 def _status(viewport, text, msec=5000):
@@ -32,11 +33,10 @@ def _status(viewport, text, msec=5000):
         flash(text, msec)
 
 
-def _need_panels(app, panels, what):
+def _need_panels(app, panels, message):
     if panels:
         return True
-    QMessageBox.information(app.window, "Board Studio",
-                            f"Select one or more Board Studio panels to {what}.")
+    QMessageBox.information(app.window, "Board Studio", message)
     return False
 
 
@@ -54,33 +54,33 @@ class PropertiesDialog(QDialog):
 
     def __init__(self, parent, panels):
         super().__init__(parent)
-        self.setWindowTitle("Panel Properties" if len(panels) == 1
-                            else f"Panel Properties — {len(panels)} panels")
+        self.setWindowTitle(tr("Panel Properties") if len(panels) == 1
+                            else tr("Panel Properties — {n} panels", n=len(panels)))
         datas = [p.data for p in panels]
         lay = QVBoxLayout(self)
 
-        decor = QGroupBox("Decor (Viyar)", self)
+        decor = QGroupBox(tr("Decor (Viyar)"), self)
         form = QFormLayout(decor)
         self.article = QLineEdit(self)
         self.decor = QLineEdit(self)
-        for edit, key, hint in ((self.article, "article", "e.g. 151932"),
-                                (self.decor, "decor", "e.g. KRONOSPAN 5307 SN")):
+        for edit, key, example in ((self.article, "article", "151932"),
+                                   (self.decor, "decor", "KRONOSPAN 5307 SN")):
             value = _same(d[key] for d in datas)
             if value == KEEP:
-                edit.setPlaceholderText("(mixed — leave empty to keep)")
+                edit.setPlaceholderText(tr("(mixed — leave empty to keep)"))
             else:
                 edit.setText(value)
-                edit.setPlaceholderText(hint)
-        form.addRow("Article", self.article)
-        form.addRow("Name", self.decor)
+                edit.setPlaceholderText(tr("e.g. {example}", example=example))
+        form.addRow(tr("Article"), self.article)
+        form.addRow(tr("Name"), self.decor)
         self.grain = QComboBox(self)
         grain = _same(d["grain"] for d in datas)
         if grain == KEEP:
-            self.grain.addItem(KEEP, KEEP)
+            self.grain.addItem(tr(KEEP), KEEP)
         for key, label in GRAIN_LABELS:
-            self.grain.addItem(label, key)
+            self.grain.addItem(tr(label), key)
         self.grain.setCurrentIndex(self.grain.findData(grain))
-        form.addRow("Texture direction", self.grain)
+        form.addRow(tr("Texture direction"), self.grain)
         lay.addWidget(decor)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
@@ -102,36 +102,39 @@ class PropertiesDialog(QDialog):
 def edit_properties(app):
     vp = app.viewport
     panels = selected_panels(vp.scene)
-    if not _need_panels(app, panels, "set the texture and decor"):
+    if not _need_panels(app, panels, tr("Select one or more Board Studio panels to set "
+                                        "the texture and decor.")):
         return
     dlg = PropertiesDialog(app.window, panels)
     if dlg.exec() != QDialog.Accepted:
         return
     err = update_panels(vp, [(p, dlg.apply_to(p.data)) for p in panels])
-    _status(vp, f"Panel properties not changed: {err}" if err else
-            f"Panel properties set for {len(panels)} panel(s)")
+    _status(vp, tr("Panel properties not changed: {err}", err=err) if err else
+            tr("Panel properties set for {n} panel(s)", n=len(panels)))
 
 
 # ---- Кріплення ---------------------------------------------------------------------------
 
 def fastener_summary(f):
     """Опис кріплення з бібліотеки для панелі й підказки."""
-    where = dict(library.WHERE)
+    where = {k: tr(label) for k, label in library.WHERE}
     lines = []
     for h in f["holes"]:
-        depth = "наскрізь" if h["depth"] is None else f"{h['depth']:g}"
+        depth = tr("through") if h["depth"] is None else f"{h['depth']:g}"
         extra = []
         if h.get("along"):
-            extra.append(f"+{h['along']:g} до середини")
+            extra.append(tr("+{mm:g} to the middle", mm=h["along"]))
         if h.get("from_edge"):
-            extra.append(f"{h['from_edge']:g} від торця")
+            extra.append(tr("{mm:g} from the edge", mm=h["from_edge"]))
         art = f" ${h['article']}" if h.get("article") else ""
         lines.append(f"• {where.get(h['where'], h['where'])}: Ø{h['d']:g} × {depth}{art}"
                      + (f" ({', '.join(extra)})" if extra else ""))
-    lines.append(f"Відступ {f['offset']:g} мм, крок {f.get('min_step', 0):g}…{f['step']:g} мм, "
-                 f"стик ≥ {f.get('min_joint', 0):g} мм.")
-    lines.append(f"Товщина деталей ≥ {f.get('min_edge_thickness', 0):g} / "
-                 f"{f.get('min_face_thickness', 0):g} мм, стінка ≥ {f.get('min_wall', 0):g} мм.")
+    lines.append(tr("Offset {offset:g} mm, step {min_step:g}…{step:g} mm, joint ≥ {joint:g} mm.",
+                    offset=f["offset"], min_step=f.get("min_step", 0), step=f["step"],
+                    joint=f.get("min_joint", 0)))
+    lines.append(tr("Panel thickness ≥ {edge:g} / {face:g} mm, wall ≥ {wall:g} mm.",
+                    edge=f.get("min_edge_thickness", 0), face=f.get("min_face_thickness", 0),
+                    wall=f.get("min_wall", 0)))
     return "\n".join(lines)
 
 
@@ -140,7 +143,7 @@ def add_candidates(app, chosen):
     vp = app.viewport
     new = fasteners.holes_for(chosen)
     if not new:
-        return "Нічого не відмічено."
+        return tr("Nothing is marked.")
     updates = []
     for p in _panels_of(chosen):
         added = new.get(id(p.group), [])
@@ -150,9 +153,9 @@ def add_candidates(app, chosen):
             updates.append((p, data))
     err = update_panels(vp, updates, repaint=False)
     if err:
-        return f"Кріплення не встановлено: {err}"
+        return tr("Fasteners not installed: {err}", err=err)
     n = sum(1 for c in chosen if not c.installed)
-    text = f"Додано: {n}"
+    text = tr("Added: {n}", n=n)
     _status(vp, text)
     return text
 
@@ -170,14 +173,14 @@ def place_fastener(app, key, offset=None, step=None):
     панелями (для скриптів і тестів; у вікні місця обирає користувач)."""
     f = library.find(library.fasteners(), key)
     if f is None:
-        return "Такого кріплення в бібліотеці немає."
+        return tr("There is no such fastener in the library.")
     panels = selected_panels(app.viewport.scene)
     cands, skipped = fasteners.candidates(panels, f, offset, step)
     why = "".join(f"\n• {names}: {reason}" for names, reason in skipped)
     if not cands:
-        return ("Стиків не знайдено: торець панелі має лежати на пласті іншої."
-                if not skipped else f"{f['name']} не встановлено:{why}")
-    return add_candidates(app, cands) + (f"\nПропущено:{why}" if skipped else "")
+        return (tr("No joints found: the edge of one panel must lie on the face of another.")
+                if not skipped else tr("{name} not installed:", name=f["name"]) + why)
+    return add_candidates(app, cands) + (f"\n{tr('Skipped:')}{why}" if skipped else "")
 
 
 def remove_fasteners(app):
@@ -193,10 +196,10 @@ def remove_fasteners(app):
             data["holes"] = holes
             updates.append((p, data))
     if not updates:
-        return "На виділених панелях кріплення немає."
+        return tr("The selected panels have no fasteners.")
     err = update_panels(vp, updates, repaint=False)
-    text = f"Кріплення не прибрано: {err}" if err else \
-        f"Кріплення прибрано з {len(updates)} панел(ей)"
+    text = tr("Fasteners not removed: {err}", err=err) if err else \
+        tr("Fasteners removed from {n} panel(s)", n=len(updates))
     _status(vp, text)
     return text
 
@@ -285,18 +288,18 @@ class FastenersPanel(_LibraryList):
         for box, hi in ((self.offset, 1000.0), (self.step, 5000.0)):
             box.setRange(0.0 if box is self.offset else 1.0, hi)
             box.setDecimals(1)
-            box.setSuffix(" мм")
+            box.setSuffix(f" {tr('mm')}")
             box.valueChanged.connect(lambda _v: self.recompute())
-        form.addRow("Відступ від краю", self.offset)
-        form.addRow("Крок (найбільший)", self.step)
+        form.addRow(tr("Offset from the end"), self.offset)
+        form.addRow(tr("Step (largest)"), self.step)
         self.lay.addLayout(form)
-        self.lay.addWidget(QLabel("Рекомендовані місця:", self))
+        self.lay.addWidget(QLabel(tr("Suggested places:"), self))
         self.places = QListWidget(self)
         self.places.itemChanged.connect(self._item_changed)
         self.lay.addWidget(self.places, 1)
         row = QHBoxLayout()
-        self.all = QPushButton("Усі", self)
-        self.none = QPushButton("Жодного", self)
+        self.all = QPushButton(tr("All"), self)
+        self.none = QPushButton(tr("None"), self)
         self.all.clicked.connect(lambda: self.set_checked(
             {c.key for c in self.candidates if not c.installed}))
         self.none.clicked.connect(lambda: self.set_checked(set()))
@@ -304,23 +307,23 @@ class FastenersPanel(_LibraryList):
         row.addWidget(self.none)
         self.lay.addLayout(row)
         row = QHBoxLayout()
-        self.add = QPushButton("Додати", self)
-        self.remove = QPushButton("Прибрати", self)
+        self.add = QPushButton(tr("Add"), self)
+        self.remove = QPushButton(tr("Remove"), self)
         self.add.clicked.connect(self.add_checked)
         self.remove.clicked.connect(self._remove)
         row.addWidget(self.add)
         row.addWidget(self.remove)
         self.lay.addLayout(row)
         if activate is not None:
-            self.mode = QPushButton("Режим кріплення (клік по місцю — відмітити)", self)
+            self.mode = QPushButton(tr("Fastener mode (click a place to mark it)"), self)
             self.mode.clicked.connect(activate)
             self.lay.addWidget(self.mode)
-        show = QGroupBox("Показувати кріплення в моделі", self)
+        show = QGroupBox(tr("Show fasteners in the model"), self)
         row = QHBoxLayout(show)
-        self.show_always = QRadioButton("Постійно", show)
-        self.show_in_mode = QRadioButton("Лише в режимі", show)
-        self.show_in_mode.setToolTip("Отвори й рекомендовані місця видно, лише поки "
-                                     "активний режим «Кріплення»")
+        self.show_always = QRadioButton(tr("Always"), show)
+        self.show_in_mode = QRadioButton(tr("Only in the mode"), show)
+        self.show_in_mode.setToolTip(tr("Holes and suggested places are visible only while "
+                                        "the Fasteners mode is active"))
         row.addWidget(self.show_always)
         row.addWidget(self.show_in_mode)
         row.addStretch(1)
@@ -374,8 +377,9 @@ class FastenersPanel(_LibraryList):
         n = len(panels)
         holes = sum(1 for p in panels for h in p.data["holes"] if fasteners.is_fastener(h))
         self.head.setText(
-            f"Виділено панелей: {n}" + (f", отворів кріплення: {holes}" if holes else "")
-            if n else "Виділіть панелі, між якими треба поставити кріплення.")
+            tr("Panels selected: {n}, fastener holes: {holes}", n=n, holes=holes) if n and holes
+            else tr("Panels selected: {n}", n=n) if n
+            else tr("Select the panels to join with fasteners."))
         self.remove.setEnabled(holes > 0)
         self.recompute(panels)
 
@@ -394,8 +398,8 @@ class FastenersPanel(_LibraryList):
         self.places.blockSignals(True)
         self.places.clear()
         for c in self.candidates:
-            item = QListWidgetItem(c.label + (" — встановлено" if c.installed else ""),
-                                   self.places)
+            item = QListWidgetItem(tr("{place} — installed", place=c.label) if c.installed
+                                   else c.label, self.places)
             item.setData(Qt.UserRole, c.key)
             if c.installed:
                 item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable & ~Qt.ItemIsEnabled)
@@ -404,15 +408,16 @@ class FastenersPanel(_LibraryList):
                 item.setCheckState(Qt.Checked if c.key in self.checked else Qt.Unchecked)
         self.places.blockSignals(False)
         if self.skipped:
-            self.result.setText("Не стає:" + "".join(f"\n• {n}: {r}" for n, r in self.skipped))
+            self.result.setText(tr("Does not fit:") + "".join(f"\n• {n}: {r}" for n, r in self.skipped))
         elif len(panels) >= 2 and not self.candidates:
-            self.result.setText("Стиків не знайдено: торець панелі має лежати на пласті іншої.")
+            self.result.setText(tr("No joints found: the edge of one panel must lie on the "
+                                   "face of another."))
         self._buttons()
 
     def _buttons(self):
         free = [c for c in self.candidates if not c.installed]
         self.add.setEnabled(bool(self.checked))
-        self.add.setText(f"Додати ({len(self.checked)})" if self.checked else "Додати")
+        self.add.setText(tr("Add ({n})", n=len(self.checked)) if self.checked else tr("Add"))
         self.all.setEnabled(bool(free))
         self.none.setEnabled(bool(self.checked))
         vp = getattr(self.app, "viewport", None)
@@ -528,9 +533,9 @@ class EdgeBandPanel(_LibraryList):
     def __init__(self, app, tool, activate):
         self.tool = tool
         super().__init__(app)
-        self.head.setText("Клік по торцю панелі — додати обрану крайку, ще клік — прибрати. "
-                          "Встановлені крайки підсвічено їхнім кольором.")
-        self.mode = QPushButton("Режим крайки", self)
+        self.head.setText(tr("Click an edge of a panel to add the chosen edge band, click again to "
+                             "remove it. Installed bands are highlighted in their colour."))
+        self.mode = QPushButton(tr("Edge banding mode"), self)
         self.mode.clicked.connect(activate)
         self.lay.addWidget(self.mode)
         self.reload()
@@ -539,8 +544,10 @@ class EdgeBandPanel(_LibraryList):
         return library.edges()
 
     def describe(self, item):
-        art = f", артикул {item['article']}" if item.get("article") else ""
-        return f"Товщина {item['thickness']:g} мм{art}"
+        if item.get("article"):
+            return tr("Thickness {t:g} mm, article {article}", t=item["thickness"],
+                      article=item["article"])
+        return tr("Thickness {t:g} mm", t=item["thickness"])
 
     def decorate(self, widget_item, item):
         from PySide6.QtGui import QIcon, QPixmap
@@ -573,7 +580,7 @@ def show_panel(app, attr, title, name, make):
 def show_fasteners(app, activate=None):
     """Пункт меню «Кріплення»: бічна панель (і накладка з рекомендаціями)."""
     first = getattr(app, "_fasteners_panel", None) is None
-    panel = show_panel(app, "_fasteners_panel", "Кріплення", "fasteners",
+    panel = show_panel(app, "_fasteners_panel", tr("Fasteners"), "fasteners",
                        lambda: FastenersPanel(app, activate))
     if first:
         app.add_overlay(panel.draw)
@@ -589,14 +596,14 @@ def export_dxf(app, path=None):
     panels = selected_panels(vp.scene) or all_panels(vp.scene)
     if not panels:
         QMessageBox.information(app.window, "Board Studio",
-                                "There are no Board Studio panels to export.")
+                                tr("There are no Board Studio panels to export."))
         return None
     if path is None:
         current = getattr(app.window, "_current_path", None)
         stem = Path(current).stem if current else "untitled"
         start = str(Path(current).parent / f"{stem} flatten.dxf") if current \
             else str(Path.home() / f"{stem} flatten.dxf")
-        path, _f = QFileDialog.getSaveFileName(app.window, "Export DXF for ViyarPro", start,
+        path, _f = QFileDialog.getSaveFileName(app.window, tr("Export DXF for ViyarPro"), start,
                                                "DXF (*.dxf)")
         if not path:
             return None
@@ -607,16 +614,16 @@ def export_dxf(app, path=None):
         lost = [p.name for p in panels if p.cutouts or not p.outline()]
         off = [f"{p.name} ({n})" for p in panels if (n := fasteners.misplaced(p))]
     except OSError as exc:
-        QMessageBox.warning(app.window, "Board Studio", f"Export error: {exc}")
+        QMessageBox.warning(app.window, "Board Studio", tr("Export error: {err}", err=exc))
         return None
     warn = []
     if lost:
-        warn.append("Експортовано, але форму передано не повністю (внутрішні вирізи чи "
-                    "нерозпізнаний контур): " + ", ".join(lost))
+        warn.append(tr("Exported, but the shape is not fully carried over (inner cutouts or an "
+                       "unrecognized outline): {names}", names=", ".join(lost)))
     if off:
-        warn.append("Отвори за контуром панелі — приберіть кріплення й поставте знову: "
-                    + ", ".join(off))
+        warn.append(tr("Holes outside the panel outline — remove the fasteners and install them "
+                       "again: {names}", names=", ".join(off)))
     if warn:
         QMessageBox.warning(app.window, "Board Studio", "\n\n".join(warn))
-    _status(vp, f"{len(panels)} panel(s) exported to {path}", 6000)
+    _status(vp, tr("{n} panel(s) exported to {path}", n=len(panels), path=path), 6000)
     return path

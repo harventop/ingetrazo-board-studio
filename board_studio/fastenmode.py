@@ -10,22 +10,29 @@ from __future__ import annotations
 
 from tools.base import Tool
 
+from .i18n import tr
 from .panels import iter_panels
 
 
 class FastenerTool(Tool):
-    name = "Fasteners"
     icon = "select"
-    description = ("Click a suggested place to mark it for the fastener; "
-                   "click a panel to add it to the selection or remove it.")
     uses_snap = False
 
     def __init__(self, panel_getter):
         self._panel = panel_getter      # → FastenersPanel або None
 
+    @property
+    def name(self):
+        return tr("Fasteners")
+
+    @property
+    def description(self):
+        return tr("Click a suggested place to mark it for the fastener; "
+                  "click a panel to add it to the selection or remove it.")
+
     def on_activate(self, viewport):
-        viewport.flash_status("Fasteners: click a suggested place to mark it, "
-                              "click a panel to select it", 10000)
+        viewport.flash_status(tr("Fasteners: click a suggested place to mark it, "
+                                 "click a panel to select it"), 10000)
         refresh = getattr(self, "refresh_hint", None)
         if callable(refresh):
             refresh(viewport)
